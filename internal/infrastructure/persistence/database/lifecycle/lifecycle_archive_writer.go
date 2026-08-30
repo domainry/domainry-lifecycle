@@ -21,24 +21,35 @@ type ArchiveWriter struct {
 
 func NewArchiveWriter(store modulehost.Host) ArchiveWriter { return ArchiveWriter{store: store} }
 
-func (w ArchiveWriter) ArchivePayload(ctx context.Context, owner string, job lifecyclemodel.CleanupJob, policy lifecyclemodel.PolicyVersion, source, resourceID string, payload []byte) (bool, error) {
+func (w ArchiveWriter) Archived(ctx context.Context, workspaceID, source, resourceID, policyKey string) (bool, error) {
 	if w.store == nil {
 		return false, fmt.Errorf("lifecycle archive store unavailable")
 	}
-	renderer, db := w.store.Dialect(), w.store.Database()
-	check, args, err := ormbuilder.NewWorkspaceSelectBuilder(renderer, "lifecycle_archive_entries", job.WorkspaceID).
+	check, args, err := ormbuilder.NewWorkspaceSelectBuilder(w.store.Dialect(), "lifecycle_archive_entries", workspaceID).
 		Projections(ormbuilder.Project(ormbuilder.CountAll())).
-		Where(ormbuilder.And(ormbuilder.Equal("source_table", source), ormbuilder.Equal("resource_id", resourceID), ormbuilder.Equal("policy_key", policy.Policy.Key))).Build()
+		Where(ormbuilder.And(ormbuilder.Equal("source_table", source), ormbuilder.Equal("resource_id", resourceID), ormbuilder.Equal("policy_key", policyKey))).Build()
 	if err != nil {
 		return false, err
 	}
 	var exists int
-	if err := db.QueryRowContext(ctx, check, args...).Scan(&exists); err != nil {
+	if err := w.store.Database().QueryRowContext(ctx, check, args...).Scan(&exists); err != nil {
 		return false, err
 	}
-	if exists > 0 {
+	return exists > 0, nil
+}
+
+func (w ArchiveWriter) ArchivePayload(ctx context.Context, owner string, job lifecyclemodel.CleanupJob, policy lifecyclemodel.PolicyVersion, source, resourceID string, payload []byte) (bool, error) {
+	if w.store == nil {
+		return false, fmt.Errorf("lifecycle archive store unavailable")
+	}
+	exists, err := w.Archived(ctx, job.WorkspaceID, source, resourceID, policy.Policy.Key)
+	if err != nil {
+		return false, err
+	}
+	if exists {
 		return false, nil
 	}
+	renderer, db := w.store.Dialect(), w.store.Database()
 	digest := sha256.Sum256(payload)
 	insert, args, err := ormbuilder.NewWorkspaceInsertBuilder(renderer, "lifecycle_archive_entries", job.WorkspaceID).
 		Columns("id", "owner", "source_table", "resource_id", "policy_key", "policy_version", "job_id", "payload_hash", "payload_json", "archived_at").

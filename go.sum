@@ -4,8 +4,8 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/domainry/domainry-foundation v0.1.0-dev.5 h1:50cmggDKFDAUSPJ3vDIy12zoUhcCJ37SSFEghIElI4k=
 github.com/domainry/domainry-foundation v0.1.0-dev.5/go.mod h1:WvgF05kjXLik+UZR46PpG5bbbt/gDp2WeUo4o7H7NjA=
-github.com/domainry/domainry-lifecycle-sdk v0.1.0 h1:r2wLW25WqoEyjE4HCV/eYsz18b3SDD5hyTAIMto84jI=
-github.com/domainry/domainry-lifecycle-sdk v0.1.0/go.mod h1:IXw6ThGP1tBzSk7CY14JAYuPDFmrOrBHfauL/2XPvqA=
+github.com/domainry/domainry-lifecycle-sdk v0.1.1 h1:764FBiH9DDEROKdwleHvgCCf67LQ4L0u1bwYEhiFRfc=
+github.com/domainry/domainry-lifecycle-sdk v0.1.1/go.mod h1:IXw6ThGP1tBzSk7CY14JAYuPDFmrOrBHfauL/2XPvqA=
 github.com/domainry/domainry-orm v0.1.25 h1:Q/FRU/3sbJU6G2lnZ1laufD+7k2hwDtHzakQd4h6oq0=
 github.com/domainry/domainry-orm v0.1.25/go.mod h1:NKMojLuridkYCS4i5L7BO7LMTMsf/uOkWQ9OQ+9Vdn4=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=

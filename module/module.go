@@ -87,7 +87,7 @@ func (*binding) SubjectArtifacts(root string) (contract.SubjectArtifactStore, er
 	return artifactstore.NewSubjectStore(root), nil
 }
 
-func (b *binding) ArchiveWriter() contract.ArchiveWriter {
+func (b *binding) ArchiveStore() contract.ArchiveStore {
 	if b == nil {
 		return persistence.NewArchiveWriter(nil)
 	}
