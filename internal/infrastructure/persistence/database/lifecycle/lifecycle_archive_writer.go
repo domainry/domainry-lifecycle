@@ -14,7 +14,7 @@ import (
 )
 
 // ArchiveWriter is the narrow host-owned port used by source-owner executors
-// to append archive evidence without owning lifecycle_archive_entries.
+// to append archive evidence without owning _lifecycle_archive_entries.
 type ArchiveWriter struct {
 	store modulehost.Host
 }
@@ -25,7 +25,7 @@ func (w ArchiveWriter) Archived(ctx context.Context, workspaceID, source, resour
 	if w.store == nil {
 		return false, fmt.Errorf("lifecycle archive store unavailable")
 	}
-	check, args, err := ormbuilder.NewWorkspaceSelectBuilder(w.store.Dialect(), "lifecycle_archive_entries", workspaceID).
+	check, args, err := ormbuilder.NewWorkspaceSelectBuilder(w.store.Dialect(), "_lifecycle_archive_entries", workspaceID).
 		Projections(ormbuilder.Project(ormbuilder.CountAll())).
 		Where(ormbuilder.And(ormbuilder.Equal("source_table", source), ormbuilder.Equal("resource_id", resourceID), ormbuilder.Equal("policy_key", policyKey))).Build()
 	if err != nil {
@@ -53,7 +53,7 @@ func (w ArchiveWriter) ArchivePayload(ctx context.Context, owner string, job lif
 	renderer := w.store.Dialect()
 	db := modulehost.ExecutorFromContext(ctx, w.store.Database())
 	digest := sha256.Sum256(payload)
-	insert, args, err := ormbuilder.NewWorkspaceInsertBuilder(renderer, "lifecycle_archive_entries", job.WorkspaceID).
+	insert, args, err := ormbuilder.NewWorkspaceInsertBuilder(renderer, "_lifecycle_archive_entries", job.WorkspaceID).
 		Columns("id", "owner", "source_table", "resource_id", "policy_key", "policy_version", "job_id", "payload_hash", "payload_json", "archived_at").
 		Values(requestcontext.NewRequestID(), owner, source, resourceID, policy.Policy.Key, policy.Policy.Version, job.ID, hex.EncodeToString(digest[:]), string(payload), time.Now().UTC().Format(time.RFC3339Nano)).Build()
 	if err != nil {

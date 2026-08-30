@@ -59,7 +59,7 @@ func TestLifecycleStorePersistsOwnedAggregate(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	if err := db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM lifecycle_audit_evidence WHERE workspace_id = ?", "workspace-a").Scan(&count); err != nil || count != 1 {
+	if err := db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _lifecycle_audit_evidence WHERE workspace_id = ?", "workspace-a").Scan(&count); err != nil || count != 1 {
 		t.Fatalf("audit evidence count=%d err=%v", count, err)
 	}
 }

@@ -21,7 +21,7 @@ func (e OwnerExecutor) previewSpec(ctx context.Context, workspaceID string, spec
 	} else {
 		archivePredicate = ormbuilder.And(archivePredicate, ormbuilder.Equal("workspace_id", workspaceID))
 	}
-	archive := ormbuilder.NewSelectBuilder(e.renderer, "lifecycle_archive_entries").Alias("archive").Columns("id").Where(archivePredicate)
+	archive := ormbuilder.NewSelectBuilder(e.renderer, "_lifecycle_archive_entries").Alias("archive").Columns("id").Where(archivePredicate)
 	predicate = ormbuilder.And(predicate, ormbuilder.NotExistsSubquery(archive))
 	builder := ormbuilder.NewSelectBuilder(e.renderer, spec.table).Alias(candidateAlias).Projections(ormbuilder.Project(ormbuilder.CountAll()), ormbuilder.Project(ormbuilder.Min(ormbuilder.Column(spec.timeColumn))))
 	if spec.tenantColumn != "" {

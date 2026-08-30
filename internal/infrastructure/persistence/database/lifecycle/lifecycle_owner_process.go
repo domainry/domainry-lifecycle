@@ -13,7 +13,7 @@ func (e OwnerExecutor) processSpec(ctx context.Context, job lifecyclemodel.Clean
 	const candidateAlias = "candidate"
 	predicate := cleanupPredicate(spec, cutoff, candidateAlias)
 	if job.Operation == lifecyclemodel.OperationArchive {
-		archive := ormbuilder.NewWorkspaceSelectBuilder(e.renderer, "lifecycle_archive_entries", job.WorkspaceID).Alias("archive").Columns("id").Where(ormbuilder.And(
+		archive := ormbuilder.NewWorkspaceSelectBuilder(e.renderer, "_lifecycle_archive_entries", job.WorkspaceID).Alias("archive").Columns("id").Where(ormbuilder.And(
 			ormbuilder.Equal("source_table", spec.table),
 			ormbuilder.EqualExpressions(ormbuilder.QualifiedColumn("archive", "resource_id"), ormbuilder.QualifiedColumn(candidateAlias, spec.idColumn)),
 			ormbuilder.Equal("policy_key", policy.Policy.Key),
@@ -103,7 +103,7 @@ func (e OwnerExecutor) processSpec(ctx context.Context, job lifecyclemodel.Clean
 		if job.Operation == lifecyclemodel.OperationArchive {
 			continue
 		}
-		archive := ormbuilder.NewWorkspaceSelectBuilder(e.renderer, "lifecycle_archive_entries", job.WorkspaceID).Columns("id").Where(ormbuilder.And(ormbuilder.Equal("source_table", spec.table), ormbuilder.Equal("resource_id", candidate.id)))
+		archive := ormbuilder.NewWorkspaceSelectBuilder(e.renderer, "_lifecycle_archive_entries", job.WorkspaceID).Columns("id").Where(ormbuilder.And(ormbuilder.Equal("source_table", spec.table), ormbuilder.Equal("resource_id", candidate.id)))
 		deletePredicate := ormbuilder.And(ormbuilder.Equal(spec.idColumn, candidate.id), ormbuilder.ExistsSubquery(archive))
 		var deleteQuery string
 		var deleteArgs []any

@@ -12,7 +12,7 @@ import (
 
 func (s LifecycleStore) Metrics(ctx context.Context, workspaceID string, now time.Time) (lifecyclemodel.Metrics, error) {
 	metrics := lifecyclemodel.Metrics{}
-	query, args, buildErr := ormbuilder.NewWorkspaceSelectBuilder(s.renderer, "lifecycle_cleanup_jobs", workspaceID).Projections(ormbuilder.Project(ormbuilder.CountAll()), ormbuilder.Project(ormbuilder.Min(ormbuilder.Column("updated_at")))).Where(ormbuilder.In("status", lifecyclemodel.CleanupStatusPending, lifecyclemodel.CleanupStatusPaused, lifecyclemodel.CleanupStatusFailed)).Build()
+	query, args, buildErr := ormbuilder.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_cleanup_jobs", workspaceID).Projections(ormbuilder.Project(ormbuilder.CountAll()), ormbuilder.Project(ormbuilder.Min(ormbuilder.Column("updated_at")))).Where(ormbuilder.In("status", lifecyclemodel.CleanupStatusPending, lifecyclemodel.CleanupStatusPaused, lifecyclemodel.CleanupStatusFailed)).Build()
 	if buildErr != nil {
 		return metrics, buildErr
 	}
@@ -23,14 +23,14 @@ func (s LifecycleStore) Metrics(ctx context.Context, workspaceID string, now tim
 	if oldest.Valid {
 		metrics.OldestEligible, _ = time.Parse(time.RFC3339Nano, oldest.String)
 	}
-	query, args, buildErr = ormbuilder.NewWorkspaceSelectBuilder(s.renderer, "lifecycle_legal_holds", workspaceID).Projections(ormbuilder.Project(ormbuilder.CountAll())).Where(ormbuilder.And(ormbuilder.LessThanOrEqual("starts_at", lifecycleTime(now)), ormbuilder.Or(ormbuilder.Equal("ends_at", ""), ormbuilder.GreaterThan("ends_at", lifecycleTime(now))))).Build()
+	query, args, buildErr = ormbuilder.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_legal_holds", workspaceID).Projections(ormbuilder.Project(ormbuilder.CountAll())).Where(ormbuilder.And(ormbuilder.LessThanOrEqual("starts_at", lifecycleTime(now)), ormbuilder.Or(ormbuilder.Equal("ends_at", ""), ormbuilder.GreaterThan("ends_at", lifecycleTime(now))))).Build()
 	if buildErr != nil {
 		return metrics, buildErr
 	}
 	if err := s.database(ctx).QueryRowContext(ctx, query, args...).Scan(&metrics.LegalHoldCount); err != nil {
 		return metrics, err
 	}
-	query, args, buildErr = ormbuilder.NewWorkspaceSelectBuilder(s.renderer, "lifecycle_audit_evidence", workspaceID).Columns("event", "payload_json").Where(ormbuilder.In("event", "lifecycle.cleanup.succeeded", "lifecycle.cleanup.failed")).Build()
+	query, args, buildErr = ormbuilder.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_audit_evidence", workspaceID).Columns("event", "payload_json").Where(ormbuilder.In("event", "lifecycle.cleanup.succeeded", "lifecycle.cleanup.failed")).Build()
 	if buildErr != nil {
 		return metrics, buildErr
 	}

@@ -82,7 +82,7 @@ func (s *FileArtifactStore) RegisterUpload(ctx context.Context, artifact lifecyc
 	}
 	createdAt := artifact.CreatedAt.UTC().Format(time.RFC3339Nano)
 	var id string
-	query, args, buildErr := ormbuilder.NewWorkspaceSelectBuilder(s.renderer, "lifecycle_file_artifacts", artifact.WorkspaceID).
+	query, args, buildErr := ormbuilder.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_file_artifacts", artifact.WorkspaceID).
 		Columns("id").Where(ormbuilder.Equal("filename", artifact.Filename)).Build()
 	if buildErr != nil {
 		return fmt.Errorf("build upload artifact lookup: %w", buildErr)
@@ -92,7 +92,7 @@ func (s *FileArtifactStore) RegisterUpload(ctx context.Context, artifact lifecyc
 		return err
 	}
 	if err == nil {
-		query, args, buildErr = ormbuilder.NewWorkspaceUpdateBuilder(s.renderer, "lifecycle_file_artifacts", artifact.WorkspaceID).
+		query, args, buildErr = ormbuilder.NewWorkspaceUpdateBuilder(s.renderer, "_lifecycle_file_artifacts", artifact.WorkspaceID).
 			Set("object_key", artifact.ObjectKey).Set("field_key", artifact.FieldKey).Set("content_type", artifact.ContentType).Set("sha256", artifact.SHA256).Set("size_bytes", artifact.Size).
 			Set("status", "staged").Set("scan_status", lifecyclecontract.FileScanPending).Set("scan_provider", "").Set("scan_evidence_ref", "").Set("scanned_at", "").
 			Set("created_at", createdAt).Set("last_referenced_at", "").Set("delete_after", artifact.CreatedAt.UTC().Add(uploadArtifactGracePeriod).Format(time.RFC3339Nano)).Set("deleted_at", "").
@@ -103,7 +103,7 @@ func (s *FileArtifactStore) RegisterUpload(ctx context.Context, artifact lifecyc
 		_, err = s.database(ctx).ExecContext(ctx, query, args...)
 		return err
 	}
-	query, args, buildErr = ormbuilder.NewWorkspaceInsertBuilder(s.renderer, "lifecycle_file_artifacts", artifact.WorkspaceID).
+	query, args, buildErr = ormbuilder.NewWorkspaceInsertBuilder(s.renderer, "_lifecycle_file_artifacts", artifact.WorkspaceID).
 		Columns("id", "object_key", "field_key", "filename", "content_type", "sha256", "size_bytes", "status", "scan_status", "scan_provider", "scan_evidence_ref", "scanned_at", "created_at", "last_referenced_at", "delete_after", "deleted_at").
 		Values(artifact.ID, artifact.ObjectKey, artifact.FieldKey, artifact.Filename, artifact.ContentType, artifact.SHA256, artifact.Size, "staged", lifecyclecontract.FileScanPending, "", "", "", createdAt, "", artifact.CreatedAt.UTC().Add(uploadArtifactGracePeriod).Format(time.RFC3339Nano), "").Build()
 	if buildErr != nil {
@@ -122,7 +122,7 @@ func (s *FileArtifactStore) FindFileScan(ctx context.Context, workspaceID, fileI
 		return lifecyclecontract.FileScanEvidence{}, err
 	}
 	columns := []string{"id", "workspace_id", "filename", "content_type", "object_key", "field_key", "sha256", "size_bytes", "scan_status", "scan_provider", "scan_evidence_ref", "scanned_at"}
-	query, args, buildErr := ormbuilder.NewWorkspaceSelectBuilder(s.renderer, "lifecycle_file_artifacts", workspace.String()).Columns(columns...).
+	query, args, buildErr := ormbuilder.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_file_artifacts", workspace.String()).Columns(columns...).
 		Where(ormbuilder.And(ormbuilder.Equal("id", strings.TrimSpace(fileID)), ormbuilder.Equal("deleted_at", ""))).Build()
 	if buildErr != nil {
 		return lifecyclecontract.FileScanEvidence{}, fmt.Errorf("build file scan lookup: %w", buildErr)
@@ -157,7 +157,7 @@ func (s *FileArtifactStore) RecordFileScan(ctx context.Context, evidence lifecyc
 	if current.SHA256 != strings.TrimSpace(evidence.SHA256) || current.Size != evidence.Size {
 		return fmt.Errorf("file scan content identity mismatch")
 	}
-	query, args, buildErr := ormbuilder.NewWorkspaceUpdateBuilder(s.renderer, "lifecycle_file_artifacts", current.WorkspaceID).
+	query, args, buildErr := ormbuilder.NewWorkspaceUpdateBuilder(s.renderer, "_lifecycle_file_artifacts", current.WorkspaceID).
 		Set("scan_status", evidence.Status).Set("scan_provider", strings.TrimSpace(evidence.Provider)).Set("scan_evidence_ref", strings.TrimSpace(evidence.EvidenceRef)).
 		Set("scanned_at", evidence.ScannedAt.UTC().Format(time.RFC3339Nano)).Where(ormbuilder.And(ormbuilder.Equal("id", current.FileID), ormbuilder.Equal("sha256", current.SHA256), ormbuilder.Equal("size_bytes", current.Size))).Build()
 	if buildErr != nil {
@@ -196,7 +196,7 @@ func (s *FileArtifactStore) ReconcileUploadArtifacts(ctx context.Context, scope 
 		result.ExpiredDownloads = expiredDownloads
 	}
 	columns := []string{"id", "workspace_id", "object_key", "field_key", "filename", "status", "created_at", "delete_after"}
-	statement, args, buildErr := ormbuilder.NewSelectBuilder(s.renderer, "lifecycle_file_artifacts").Columns(columns...).
+	statement, args, buildErr := ormbuilder.NewSelectBuilder(s.renderer, "_lifecycle_file_artifacts").Columns(columns...).
 		Where(ormbuilder.NotEqual("status", "deleted")).OrderBy(ormbuilder.Ascending("created_at"), ormbuilder.Ascending("id")).Limit(limit).Build()
 	if buildErr != nil {
 		return result, fmt.Errorf("build upload artifact reconciliation query: %w", buildErr)
@@ -286,7 +286,7 @@ func (s *FileArtifactStore) updateArtifactState(ctx context.Context, workspaceID
 	if !deleteAfter.IsZero() {
 		deletion = deleteAfter.UTC().Format(time.RFC3339Nano)
 	}
-	update := ormbuilder.NewWorkspaceUpdateBuilder(s.renderer, "lifecycle_file_artifacts", workspaceID).Set("status", status).Set("delete_after", deletion)
+	update := ormbuilder.NewWorkspaceUpdateBuilder(s.renderer, "_lifecycle_file_artifacts", workspaceID).Set("status", status).Set("delete_after", deletion)
 	if lastReferenced != "" {
 		update.Set("last_referenced_at", lastReferenced)
 	}
@@ -299,7 +299,7 @@ func (s *FileArtifactStore) updateArtifactState(ctx context.Context, workspaceID
 }
 
 func (s *FileArtifactStore) markArtifactDeleted(ctx context.Context, workspaceID, id string, now time.Time) error {
-	query, args, buildErr := ormbuilder.NewWorkspaceUpdateBuilder(s.renderer, "lifecycle_file_artifacts", workspaceID).
+	query, args, buildErr := ormbuilder.NewWorkspaceUpdateBuilder(s.renderer, "_lifecycle_file_artifacts", workspaceID).
 		Set("status", "deleted").Set("delete_after", "").Set("deleted_at", now.UTC().Format(time.RFC3339Nano)).Where(ormbuilder.Equal("id", id)).Build()
 	if buildErr != nil {
 		return fmt.Errorf("build upload artifact deletion: %w", buildErr)
