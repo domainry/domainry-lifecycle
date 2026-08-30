@@ -5,9 +5,9 @@ package schema
 import (
 	"context"
 	"fmt"
+	ormschema "github.com/domainry/domainry-orm/schema"
 
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
-	ormbuilder "github.com/domainry/domainry-orm/builder"
 	ormmigration "github.com/domainry/domainry-orm/migration"
 )
 
@@ -15,7 +15,7 @@ const Owner = "lifecycle"
 
 type table struct {
 	name    string
-	columns []ormbuilder.SchemaColumn
+	columns []ormschema.ColumnDefinition
 	primary []string
 }
 
@@ -33,8 +33,8 @@ func Migrations(renderer modulehost.Dialect) ([]modulehost.SchemaMigration, erro
 	statements := make([]string, 0, len(tableDefinitions)+len(indexDefinitions))
 	baseline := ormmigration.Baseline{Tables: make([]ormmigration.Table, 0, len(tableDefinitions))}
 	for _, definition := range tableDefinitions {
-		builder := ormbuilder.NewCreateTableBuilder(renderer, definition.name).
-			IfNotExists().WithoutSystemColumns().Columns(definition.columns...)
+		builder := ormschema.NewTable(renderer, definition.name).
+			IfNotExists().Columns(definition.columns...)
 		if len(definition.primary) > 0 {
 			builder.PrimaryKey(definition.primary...)
 		}
@@ -60,7 +60,7 @@ func Migrations(renderer modulehost.Dialect) ([]modulehost.SchemaMigration, erro
 		// The host ledger guarantees one execution. MySQL has no portable
 		// CREATE INDEX IF NOT EXISTS form, so idempotency belongs to the
 		// migration registrar rather than a driver branch in this module.
-		builder := ormbuilder.NewCreateIndexBuilder(renderer, definition.name, definition.table).
+		builder := ormschema.NewIndex(renderer, definition.name, definition.table).
 			Columns(definition.columns...)
 		if definition.unique {
 			builder.Unique()
@@ -94,33 +94,33 @@ func Apply(ctx context.Context, host modulehost.Host) error {
 	return host.Migrations().ApplyOwnedMigrations(ctx, Owner, values)
 }
 
-func key(name string) ormbuilder.SchemaColumn {
-	return ormbuilder.DefineColumn(name, ormbuilder.TextKeyType(191)).NotNull()
+func key(name string) ormschema.ColumnDefinition {
+	return ormschema.Column(name, ormschema.TextKey(191)).NotNull()
 }
-func optionalKey(name string) ormbuilder.SchemaColumn {
-	return ormbuilder.DefineColumn(name, ormbuilder.TextKeyType(191)).NotNull().DefaultValue("")
+func optionalKey(name string) ormschema.ColumnDefinition {
+	return ormschema.Column(name, ormschema.TextKey(191)).NotNull().DefaultValue("")
 }
-func text(name string) ormbuilder.SchemaColumn {
-	return ormbuilder.DefineColumn(name, ormbuilder.TextType()).NotNull()
+func text(name string) ormschema.ColumnDefinition {
+	return ormschema.Column(name, ormschema.Text()).NotNull()
 }
-func bigint(name string) ormbuilder.SchemaColumn {
-	return ormbuilder.DefineColumn(name, ormbuilder.BigIntType()).NotNull()
+func bigint(name string) ormschema.ColumnDefinition {
+	return ormschema.Column(name, ormschema.BigInt()).NotNull()
 }
-func boolean(name string, value bool) ormbuilder.SchemaColumn {
-	return ormbuilder.DefineColumn(name, ormbuilder.BooleanType()).NotNull().DefaultValue(value)
+func boolean(name string, value bool) ormschema.ColumnDefinition {
+	return ormschema.Column(name, ormschema.Boolean()).NotNull().DefaultValue(value)
 }
 
 func tables() []table {
 	return []table{
-		{"lifecycle_policy_versions", []ormbuilder.SchemaColumn{key("workspace_id"), key("policy_key"), key("version"), bigint("revision"), key("status"), text("payload_json"), key("published_at")}, nil},
-		{"lifecycle_legal_holds", []ormbuilder.SchemaColumn{key("id"), key("workspace_id"), optionalKey("owner"), optionalKey("resource_type"), optionalKey("resource_id"), key("starts_at"), optionalKey("ends_at"), key("review_at"), text("payload_json")}, nil},
-		{"lifecycle_cleanup_jobs", []ormbuilder.SchemaColumn{key("id"), key("workspace_id"), key("policy_key"), key("policy_version"), key("status"), optionalKey("checkpoint_value"), optionalKey("lease_owner"), optionalKey("lease_expires_at"), ormbuilder.DefineColumn("fencing_token", ormbuilder.BigIntType()).NotNull().DefaultValue(int64(0)), key("updated_at"), text("payload_json")}, nil},
-		{"lifecycle_subject_requests", []ormbuilder.SchemaColumn{key("id"), key("workspace_id"), key("kind"), key("status"), key("subject_id"), optionalKey("resolved_identity"), optionalKey("download_expires_at"), key("updated_at"), text("payload_json")}, nil},
-		{"lifecycle_external_erasures", []ormbuilder.SchemaColumn{key("id"), key("request_id"), key("workspace_id"), key("status"), text("payload_json")}, nil},
-		{"lifecycle_audit_evidence", []ormbuilder.SchemaColumn{key("id"), key("workspace_id"), key("event"), key("resource_id"), optionalKey("policy_key"), key("created_at"), text("payload_json")}, nil},
-		{"lifecycle_archive_entries", []ormbuilder.SchemaColumn{key("id"), key("workspace_id"), key("owner"), key("source_table"), key("resource_id"), key("policy_key"), key("policy_version"), key("job_id"), key("payload_hash"), text("payload_json"), key("archived_at")}, nil},
-		{"lifecycle_deletion_registry", []ormbuilder.SchemaColumn{key("request_id"), key("workspace_id"), key("resolved_identity"), boolean("backup_pending", true), text("evidence"), key("updated_at")}, nil},
-		{"lifecycle_file_artifacts", []ormbuilder.SchemaColumn{key("id"), key("workspace_id"), key("object_key"), key("field_key"), key("filename"), key("content_type"), key("sha256"), bigint("size_bytes"), key("status"), ormbuilder.DefineColumn("scan_status", ormbuilder.TextKeyType(191)).NotNull().DefaultValue("pending"), optionalKey("scan_provider"), optionalKey("scan_evidence_ref"), optionalKey("scanned_at"), key("created_at"), optionalKey("last_referenced_at"), optionalKey("delete_after"), optionalKey("deleted_at")}, nil},
+		{"lifecycle_policy_versions", []ormschema.ColumnDefinition{key("workspace_id"), key("policy_key"), key("version"), bigint("revision"), key("status"), text("payload_json"), key("published_at")}, nil},
+		{"lifecycle_legal_holds", []ormschema.ColumnDefinition{key("id"), key("workspace_id"), optionalKey("owner"), optionalKey("resource_type"), optionalKey("resource_id"), key("starts_at"), optionalKey("ends_at"), key("review_at"), text("payload_json")}, nil},
+		{"lifecycle_cleanup_jobs", []ormschema.ColumnDefinition{key("id"), key("workspace_id"), key("policy_key"), key("policy_version"), key("status"), optionalKey("checkpoint_value"), optionalKey("lease_owner"), optionalKey("lease_expires_at"), ormschema.Column("fencing_token", ormschema.BigInt()).NotNull().DefaultValue(int64(0)), key("updated_at"), text("payload_json")}, nil},
+		{"lifecycle_subject_requests", []ormschema.ColumnDefinition{key("id"), key("workspace_id"), key("kind"), key("status"), key("subject_id"), optionalKey("resolved_identity"), optionalKey("download_expires_at"), key("updated_at"), text("payload_json")}, nil},
+		{"lifecycle_external_erasures", []ormschema.ColumnDefinition{key("id"), key("request_id"), key("workspace_id"), key("status"), text("payload_json")}, nil},
+		{"lifecycle_audit_evidence", []ormschema.ColumnDefinition{key("id"), key("workspace_id"), key("event"), key("resource_id"), optionalKey("policy_key"), key("created_at"), text("payload_json")}, nil},
+		{"lifecycle_archive_entries", []ormschema.ColumnDefinition{key("id"), key("workspace_id"), key("owner"), key("source_table"), key("resource_id"), key("policy_key"), key("policy_version"), key("job_id"), key("payload_hash"), text("payload_json"), key("archived_at")}, nil},
+		{"lifecycle_deletion_registry", []ormschema.ColumnDefinition{key("request_id"), key("workspace_id"), key("resolved_identity"), boolean("backup_pending", true), text("evidence"), key("updated_at")}, nil},
+		{"lifecycle_file_artifacts", []ormschema.ColumnDefinition{key("id"), key("workspace_id"), key("object_key"), key("field_key"), key("filename"), key("content_type"), key("sha256"), bigint("size_bytes"), key("status"), ormschema.Column("scan_status", ormschema.TextKey(191)).NotNull().DefaultValue("pending"), optionalKey("scan_provider"), optionalKey("scan_evidence_ref"), optionalKey("scanned_at"), key("created_at"), optionalKey("last_referenced_at"), optionalKey("delete_after"), optionalKey("deleted_at")}, nil},
 	}
 }
 

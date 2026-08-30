@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"time"
 
-	ormbuilder "github.com/domainry/domainry-orm/builder"
+	ormbuilder "github.com/domainry/domainry-orm/query"
 )
 
 func (e OwnerExecutor) previewSpec(ctx context.Context, workspaceID string, spec cleanupSpec, policyKey string, cutoff time.Time) (int64, time.Time, error) {

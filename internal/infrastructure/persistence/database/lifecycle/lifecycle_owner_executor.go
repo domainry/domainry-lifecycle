@@ -9,7 +9,7 @@ import (
 	lifecyclecontract "github.com/domainry/domainry-lifecycle-sdk/contract"
 	lifecyclemodel "github.com/domainry/domainry-lifecycle-sdk/model"
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
-	ormbuilder "github.com/domainry/domainry-orm/builder"
+	ormbuilder "github.com/domainry/domainry-orm/query"
 )
 
 type cleanupSpec struct {

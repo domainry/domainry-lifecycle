@@ -9,7 +9,7 @@ import (
 
 	lifecycleaccess "github.com/domainry/domainry-lifecycle-sdk/access"
 	lifecyclemodel "github.com/domainry/domainry-lifecycle-sdk/model"
-	ormbuilder "github.com/domainry/domainry-orm/builder"
+	ormbuilder "github.com/domainry/domainry-orm/query"
 )
 
 func (s LifecycleStore) GlobalMetrics(ctx context.Context, scope lifecycleaccess.SystemScope, now time.Time) (lifecyclemodel.Metrics, error) {

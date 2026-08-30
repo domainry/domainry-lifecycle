@@ -15,7 +15,7 @@ import (
 	lifecycleaccess "github.com/domainry/domainry-lifecycle-sdk/access"
 	lifecyclecontract "github.com/domainry/domainry-lifecycle-sdk/contract"
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
-	ormbuilder "github.com/domainry/domainry-orm/builder"
+	ormbuilder "github.com/domainry/domainry-orm/query"
 )
 
 const uploadArtifactGracePeriod = 24 * time.Hour

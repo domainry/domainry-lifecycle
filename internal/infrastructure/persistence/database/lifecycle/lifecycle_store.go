@@ -12,7 +12,7 @@ import (
 	lifecycleaccess "github.com/domainry/domainry-lifecycle-sdk/access"
 	lifecyclemodel "github.com/domainry/domainry-lifecycle-sdk/model"
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
-	ormbuilder "github.com/domainry/domainry-orm/builder"
+	ormbuilder "github.com/domainry/domainry-orm/query"
 )
 
 type LifecycleStore struct {

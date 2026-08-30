@@ -10,7 +10,7 @@ import (
 	requestcontext "github.com/domainry/domainry-foundation/requestcontext"
 	lifecyclemodel "github.com/domainry/domainry-lifecycle-sdk/model"
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
-	ormbuilder "github.com/domainry/domainry-orm/builder"
+	ormbuilder "github.com/domainry/domainry-orm/query"
 )
 
 // ArchiveWriter is the narrow host-owned port used by source-owner executors

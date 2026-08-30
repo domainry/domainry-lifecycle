@@ -6,7 +6,7 @@ import (
 	"time"
 
 	lifecyclemodel "github.com/domainry/domainry-lifecycle-sdk/model"
-	ormbuilder "github.com/domainry/domainry-orm/builder"
+	ormbuilder "github.com/domainry/domainry-orm/query"
 )
 
 func (e OwnerExecutor) processSpec(ctx context.Context, job lifecyclemodel.CleanupJob, policy lifecyclemodel.PolicyVersion, spec cleanupSpec, holds []lifecyclemodel.LegalHold, cutoff time.Time, limit int) (lifecyclemodel.CleanupBatchResult, error) {

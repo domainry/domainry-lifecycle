@@ -7,7 +7,7 @@ import (
 	"time"
 
 	lifecyclemodel "github.com/domainry/domainry-lifecycle-sdk/model"
-	ormbuilder "github.com/domainry/domainry-orm/builder"
+	ormbuilder "github.com/domainry/domainry-orm/query"
 )
 
 func (s LifecycleStore) Metrics(ctx context.Context, workspaceID string, now time.Time) (lifecyclemodel.Metrics, error) {

@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	lifecyclemodel "github.com/domainry/domainry-lifecycle-sdk/model"
-	ormbuilder "github.com/domainry/domainry-orm/builder"
+	ormbuilder "github.com/domainry/domainry-orm/query"
 )
 
 func (e OwnerExecutor) archiveChildCollections(ctx context.Context, job lifecyclemodel.CleanupJob, policy lifecyclemodel.PolicyVersion, parentID string, children []relationalChildCollection, purge bool) (int64, int64, error) {
