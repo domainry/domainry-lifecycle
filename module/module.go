@@ -66,7 +66,7 @@ func (b *binding) Repository() repository.LifecycleRepository {
 	return b.repository
 }
 
-func (b *binding) UploadArtifacts(options lifecyclesdk.UploadArtifactOptions) (contract.UploadArtifactStore, error) {
+func (b *binding) UploadArtifacts(options lifecyclesdk.UploadArtifactOptions) (contract.UploadFileArtifactStore, error) {
 	if b == nil || b.host == nil || strings.TrimSpace(options.Root) == "" || options.Fields == nil {
 		return nil, fmt.Errorf("Lifecycle upload artifact options are incomplete")
 	}

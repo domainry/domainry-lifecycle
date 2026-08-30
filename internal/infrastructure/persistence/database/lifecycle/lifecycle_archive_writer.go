@@ -32,7 +32,8 @@ func (w ArchiveWriter) Archived(ctx context.Context, workspaceID, source, resour
 		return false, err
 	}
 	var exists int
-	if err := w.store.Database().QueryRowContext(ctx, check, args...).Scan(&exists); err != nil {
+	database := modulehost.ExecutorFromContext(ctx, w.store.Database())
+	if err := database.QueryRowContext(ctx, check, args...).Scan(&exists); err != nil {
 		return false, err
 	}
 	return exists > 0, nil
@@ -49,7 +50,8 @@ func (w ArchiveWriter) ArchivePayload(ctx context.Context, owner string, job lif
 	if exists {
 		return false, nil
 	}
-	renderer, db := w.store.Dialect(), w.store.Database()
+	renderer := w.store.Dialect()
+	db := modulehost.ExecutorFromContext(ctx, w.store.Database())
 	digest := sha256.Sum256(payload)
 	insert, args, err := ormbuilder.NewWorkspaceInsertBuilder(renderer, "lifecycle_archive_entries", job.WorkspaceID).
 		Columns("id", "owner", "source_table", "resource_id", "policy_key", "policy_version", "job_id", "payload_hash", "payload_json", "archived_at").
