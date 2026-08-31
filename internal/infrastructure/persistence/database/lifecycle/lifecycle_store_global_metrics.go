@@ -8,8 +8,8 @@ import (
 	"time"
 
 	lifecycleaccess "github.com/domainry/domainry-lifecycle-sdk/access"
-	lifecyclemodel "github.com/domainry/domainry-lifecycle-sdk/model"
-	ormbuilder "github.com/domainry/domainry-orm/query"
+	lifecyclemodel "github.com/domainry/domainry-lifecycle/internal/domain/lifecycle/model"
+	"github.com/domainry/domainry-orm/query"
 )
 
 func (s LifecycleStore) GlobalMetrics(ctx context.Context, scope lifecycleaccess.SystemScope, now time.Time) (lifecyclemodel.Metrics, error) {
@@ -17,35 +17,35 @@ func (s LifecycleStore) GlobalMetrics(ctx context.Context, scope lifecycleaccess
 		return lifecyclemodel.Metrics{}, err
 	}
 	metrics := lifecyclemodel.Metrics{}
-	query, args, buildErr := ormbuilder.NewSelectBuilder(s.renderer, "_lifecycle_cleanup_jobs").Projections(
-		ormbuilder.Project(ormbuilder.CountAll()), ormbuilder.Project(ormbuilder.Min(ormbuilder.Column("updated_at"))),
-	).Where(ormbuilder.In("status", lifecyclemodel.CleanupStatusPending, lifecyclemodel.CleanupStatusPaused, lifecyclemodel.CleanupStatusFailed)).Build()
+	queryValue, args, buildErr := query.NewSelectBuilder(s.renderer, "_lifecycle_cleanup_jobs").Projections(
+		query.Project(query.CountAll()), query.Project(query.Min(query.Column("updated_at"))),
+	).Where(query.In("status", lifecyclemodel.CleanupStatusPending, lifecyclemodel.CleanupStatusPaused, lifecyclemodel.CleanupStatusFailed)).Build()
 	if buildErr != nil {
 		return metrics, fmt.Errorf("build lifecycle cleanup metrics query: %w", buildErr)
 	}
 	var oldest sql.NullString
-	if err := s.database(ctx).QueryRowContext(ctx, query, args...).Scan(&metrics.EligibleBacklog, &oldest); err != nil {
+	if err := s.database(ctx).QueryRowContext(ctx, queryValue, args...).Scan(&metrics.EligibleBacklog, &oldest); err != nil {
 		return metrics, err
 	}
 	if oldest.Valid {
 		metrics.OldestEligible = parseLifecycleTime(oldest.String)
 	}
-	query, args, buildErr = ormbuilder.NewSelectBuilder(s.renderer, "_lifecycle_legal_holds").Projections(ormbuilder.Project(ormbuilder.CountAll())).Where(ormbuilder.And(
-		ormbuilder.LessThanOrEqual("starts_at", lifecycleTime(now)), ormbuilder.Or(ormbuilder.Equal("ends_at", ""), ormbuilder.GreaterThan("ends_at", lifecycleTime(now))),
+	queryValue, args, buildErr = query.NewSelectBuilder(s.renderer, "_lifecycle_legal_holds").Projections(query.Project(query.CountAll())).Where(query.And(
+		query.LessThanOrEqual("starts_at", lifecycleTime(now)), query.Or(query.Equal("ends_at", ""), query.GreaterThan("ends_at", lifecycleTime(now))),
 	)).Build()
 	if buildErr != nil {
 		return metrics, fmt.Errorf("build lifecycle legal hold metrics query: %w", buildErr)
 	}
-	if err := s.database(ctx).QueryRowContext(ctx, query, args...).Scan(&metrics.LegalHoldCount); err != nil {
+	if err := s.database(ctx).QueryRowContext(ctx, queryValue, args...).Scan(&metrics.LegalHoldCount); err != nil {
 		return metrics, err
 	}
-	query, args, buildErr = ormbuilder.NewSelectBuilder(s.renderer, "_lifecycle_audit_evidence").Columns("event", "payload_json").Where(
-		ormbuilder.In("event", "lifecycle.cleanup.succeeded", "lifecycle.cleanup.failed"),
+	queryValue, args, buildErr = query.NewSelectBuilder(s.renderer, "_lifecycle_audit_evidence").Columns("event", "payload_json").Where(
+		query.In("event", "lifecycle.cleanup.succeeded", "lifecycle.cleanup.failed"),
 	).Build()
 	if buildErr != nil {
 		return metrics, fmt.Errorf("build lifecycle audit metrics query: %w", buildErr)
 	}
-	rows, err := s.database(ctx).QueryContext(ctx, query, args...)
+	rows, err := s.database(ctx).QueryContext(ctx, queryValue, args...)
 	if err != nil {
 		return metrics, err
 	}

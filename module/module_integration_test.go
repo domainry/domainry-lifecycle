@@ -11,7 +11,7 @@ import (
 	lifecyclesdk "github.com/domainry/domainry-lifecycle-sdk"
 	"github.com/domainry/domainry-lifecycle-sdk/model"
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
-	schema "github.com/domainry/domainry-lifecycle/internal/infrastructure/persistence/database/schema"
+	migration "github.com/domainry/domainry-lifecycle/internal/infrastructure/persistence/database/migration"
 	ormdialect "github.com/domainry/domainry-orm/dialect"
 	ormmigration "github.com/domainry/domainry-orm/migration"
 	_ "modernc.org/sqlite"
@@ -31,7 +31,7 @@ func (h integrationHost) Transactions() modulehost.Transactor       { return int
 type integrationRegistrar struct{ runner *ormmigration.Runner }
 
 func (r integrationRegistrar) ApplyOwnedMigrations(ctx context.Context, owner string, values []modulehost.SchemaMigration) error {
-	if owner != schema.Owner {
+	if owner != migration.Owner {
 		return errors.New("unexpected migration owner")
 	}
 	return r.runner.Apply(ctx, values)

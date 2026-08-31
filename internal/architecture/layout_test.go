@@ -11,11 +11,30 @@ import (
 	"testing"
 )
 
-func TestLifecyclePersistenceAndSDKBoundary(t *testing.T) {
+func TestLifecycleUsesInternalLayeredLayout(t *testing.T) {
 	root := filepath.Join("..", "..")
-	canonical := filepath.Join(root, "internal", "infrastructure", "persistence", "database", "lifecycle")
-	if info, err := os.Stat(canonical); err != nil || !info.IsDir() {
-		t.Fatalf("canonical Lifecycle database package is missing: %v", err)
+	for _, required := range []string{
+		"cmd/lifecycle-server",
+		"internal/application/lifecycle",
+		"internal/domain/lifecycle/model",
+		"internal/domain/lifecycle/repository",
+		"internal/domain/lifecycle/service",
+		"internal/assembly/module",
+		"internal/assembly/saas",
+		"internal/adapter/lifecyclesdk",
+		"internal/transport/http/module",
+		"internal/transport/http/saas",
+		"internal/infrastructure/persistence/database/lifecycle",
+		"internal/infrastructure/persistence/database/migration",
+		"internal/infrastructure/persistence/database/schema",
+		"internal/infrastructure/persistence/sqlite",
+		"internal/infrastructure/persistence/mysql",
+		"internal/infrastructure/persistence/postgres",
+		"module",
+	} {
+		if info, err := os.Stat(filepath.Join(root, required)); err != nil || !info.IsDir() {
+			t.Errorf("required Lifecycle boundary %q is missing: %v", required, err)
+		}
 	}
 	for _, legacy := range []string{"access", "application", "artifact", "contract", "migrations", "model", "modulehost", "persistence", "policy", "repository"} {
 		if _, err := os.Stat(filepath.Join(root, legacy)); !os.IsNotExist(err) {
@@ -28,6 +47,19 @@ func TestLifecyclePersistenceAndSDKBoundary(t *testing.T) {
 	}
 	if strings.Contains(string(raw), "replace ") || strings.Contains(string(raw), "../domainry-") {
 		t.Fatal("Lifecycle implementation must resolve published tags, not local directories")
+	}
+}
+
+func TestPublicModuleIsThinFacade(t *testing.T) {
+	entries, err := os.ReadDir(filepath.Join("..", "..", "module"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".go" || entry.Name() == "module.go" || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		t.Errorf("public module package contains implementation file %q", entry.Name())
 	}
 }
 

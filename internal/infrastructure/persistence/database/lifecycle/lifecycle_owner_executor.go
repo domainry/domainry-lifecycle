@@ -7,9 +7,9 @@ import (
 
 	lifecycleaccess "github.com/domainry/domainry-lifecycle-sdk/access"
 	lifecyclecontract "github.com/domainry/domainry-lifecycle-sdk/contract"
-	lifecyclemodel "github.com/domainry/domainry-lifecycle-sdk/model"
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
-	ormbuilder "github.com/domainry/domainry-orm/query"
+	lifecyclemodel "github.com/domainry/domainry-lifecycle/internal/domain/lifecycle/model"
+	"github.com/domainry/domainry-orm/query"
 )
 
 type cleanupSpec struct {
@@ -24,7 +24,7 @@ type cleanupSpec struct {
 	retentionGroup      string
 	referenceChecks     []cleanupReferenceCheck
 	childCollections    []relationalChildCollection
-	additionalPredicate func(string) ormbuilder.Predicate
+	additionalPredicate func(string) query.Predicate
 	unixNanoTime        bool
 }
 
@@ -37,8 +37,6 @@ type relationalChildCollection struct {
 	table, idColumn, tenantColumn, parentColumn string
 }
 
-// RelationalCleanupSpec is declared by the source owner of a table. Lifecycle
-// supplies the orchestration engine but does not own or discover business DDL.
 type RelationalCleanupSpec struct {
 	PolicyKey           string
 	Table               string
@@ -51,7 +49,7 @@ type RelationalCleanupSpec struct {
 	RetentionGroup      string
 	ReferenceChecks     []RelationalReferenceCheck
 	ChildCollections    []RelationalChildCollection
-	AdditionalPredicate func(string) ormbuilder.Predicate
+	AdditionalPredicate func(string) query.Predicate
 	UnixNanoTime        bool
 }
 
@@ -78,8 +76,6 @@ type OwnerExecutor struct {
 	specs    []cleanupSpec
 }
 
-// NewRelationalOwnerExecutor creates a cleanup adapter from source-owned table
-// declarations. Callers should keep these declarations in the owning module.
 func NewRelationalOwnerExecutor(store modulehost.Host, owner string, specs ...RelationalCleanupSpec) lifecyclecontract.OwnerLifecycleExecutor {
 	internal := make([]cleanupSpec, 0, len(specs))
 	for _, spec := range specs {
@@ -187,33 +183,33 @@ func (e OwnerExecutor) policySpecs(policyKey string) []cleanupSpec {
 	return result
 }
 
-func cleanupPredicate(spec cleanupSpec, cutoff time.Time, outerAlias string) ormbuilder.Predicate {
-	predicates := []ormbuilder.Predicate{}
+func cleanupPredicate(spec cleanupSpec, cutoff time.Time, outerAlias string) query.Predicate {
+	predicates := []query.Predicate{}
 	cutoffValue := any(lifecycleTime(cutoff))
 	if spec.unixNanoTime {
 		cutoffValue = cutoff.UTC().UnixNano()
 	} else {
-		predicates = append(predicates, ormbuilder.NotEqual(spec.timeColumn, ""))
+		predicates = append(predicates, query.NotEqual(spec.timeColumn, ""))
 	}
-	predicates = append(predicates, ormbuilder.LessThanOrEqual(spec.timeColumn, cutoffValue))
+	predicates = append(predicates, query.LessThanOrEqual(spec.timeColumn, cutoffValue))
 	if spec.statusColumn != "" && len(spec.ineligibleStatuses) > 0 {
 		values := make([]any, 0, len(spec.ineligibleStatuses))
 		for _, status := range spec.ineligibleStatuses {
 			values = append(values, status)
 		}
-		predicates = append(predicates, ormbuilder.NotIn(spec.statusColumn, values...))
+		predicates = append(predicates, query.NotIn(spec.statusColumn, values...))
 	}
 	if spec.statusColumn != "" && len(spec.eligibleStatuses) > 0 {
 		values := make([]any, 0, len(spec.eligibleStatuses))
 		for _, status := range spec.eligibleStatuses {
 			values = append(values, status)
 		}
-		predicates = append(predicates, ormbuilder.In(spec.statusColumn, values...))
+		predicates = append(predicates, query.In(spec.statusColumn, values...))
 	}
 	if spec.additionalPredicate != nil {
 		predicates = append(predicates, spec.additionalPredicate(outerAlias))
 	}
-	return ormbuilder.And(predicates...)
+	return query.And(predicates...)
 }
 
 func lifecycleSpecRetention(policy lifecyclemodel.RetentionPolicy, spec cleanupSpec) time.Duration {

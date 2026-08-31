@@ -5,29 +5,29 @@ import (
 	"database/sql"
 	"time"
 
-	ormbuilder "github.com/domainry/domainry-orm/query"
+	"github.com/domainry/domainry-orm/query"
 )
 
 func (e OwnerExecutor) previewSpec(ctx context.Context, workspaceID string, spec cleanupSpec, policyKey string, cutoff time.Time) (int64, time.Time, error) {
 	const candidateAlias = "candidate"
 	predicate := cleanupPredicate(spec, cutoff, candidateAlias)
-	archivePredicate := ormbuilder.And(
-		ormbuilder.Equal("source_table", spec.table),
-		ormbuilder.EqualExpressions(ormbuilder.QualifiedColumn("archive", "resource_id"), ormbuilder.QualifiedColumn(candidateAlias, spec.idColumn)),
-		ormbuilder.Equal("policy_key", policyKey),
+	archivePredicate := query.And(
+		query.Equal("source_table", spec.table),
+		query.EqualExpressions(query.QualifiedColumn("archive", "resource_id"), query.QualifiedColumn(candidateAlias, spec.idColumn)),
+		query.Equal("policy_key", policyKey),
 	)
 	if spec.tenantColumn != "" {
-		archivePredicate = ormbuilder.And(archivePredicate, ormbuilder.EqualExpressions(ormbuilder.QualifiedColumn("archive", "workspace_id"), ormbuilder.QualifiedColumn(candidateAlias, spec.tenantColumn)))
+		archivePredicate = query.And(archivePredicate, query.EqualExpressions(query.QualifiedColumn("archive", "workspace_id"), query.QualifiedColumn(candidateAlias, spec.tenantColumn)))
 	} else {
-		archivePredicate = ormbuilder.And(archivePredicate, ormbuilder.Equal("workspace_id", workspaceID))
+		archivePredicate = query.And(archivePredicate, query.Equal("workspace_id", workspaceID))
 	}
-	archive := ormbuilder.NewSelectBuilder(e.renderer, "_lifecycle_archive_entries").Alias("archive").Columns("id").Where(archivePredicate)
-	predicate = ormbuilder.And(predicate, ormbuilder.NotExistsSubquery(archive))
-	builder := ormbuilder.NewSelectBuilder(e.renderer, spec.table).Alias(candidateAlias).Projections(ormbuilder.Project(ormbuilder.CountAll()), ormbuilder.Project(ormbuilder.Min(ormbuilder.Column(spec.timeColumn))))
+	archive := query.NewSelectBuilder(e.renderer, "_lifecycle_archive_entries").Alias("archive").Columns("id").Where(archivePredicate)
+	predicate = query.And(predicate, query.NotExistsSubquery(archive))
+	builder := query.NewSelectBuilder(e.renderer, spec.table).Alias(candidateAlias).Projections(query.Project(query.CountAll()), query.Project(query.Min(query.Column(spec.timeColumn))))
 	if spec.tenantColumn != "" {
-		builder = ormbuilder.NewWorkspaceSelectBuilder(e.renderer, spec.table, workspaceID).Alias(candidateAlias).Projections(ormbuilder.Project(ormbuilder.CountAll()), ormbuilder.Project(ormbuilder.Min(ormbuilder.Column(spec.timeColumn))))
+		builder = query.NewWorkspaceSelectBuilder(e.renderer, spec.table, workspaceID).Alias(candidateAlias).Projections(query.Project(query.CountAll()), query.Project(query.Min(query.Column(spec.timeColumn))))
 	}
-	query, args, buildErr := builder.Where(predicate).Build()
+	queryValue, args, buildErr := builder.Where(predicate).Build()
 	if buildErr != nil {
 		return 0, time.Time{}, buildErr
 	}
@@ -35,7 +35,7 @@ func (e OwnerExecutor) previewSpec(ctx context.Context, workspaceID string, spec
 	parsed := time.Time{}
 	if spec.unixNanoTime {
 		var oldest sql.NullInt64
-		if err := e.database(ctx).QueryRowContext(ctx, query, args...).Scan(&count, &oldest); err != nil {
+		if err := e.database(ctx).QueryRowContext(ctx, queryValue, args...).Scan(&count, &oldest); err != nil {
 			return 0, time.Time{}, err
 		}
 		if oldest.Valid {
@@ -43,7 +43,7 @@ func (e OwnerExecutor) previewSpec(ctx context.Context, workspaceID string, spec
 		}
 	} else {
 		var oldest sql.NullString
-		if err := e.database(ctx).QueryRowContext(ctx, query, args...).Scan(&count, &oldest); err != nil {
+		if err := e.database(ctx).QueryRowContext(ctx, queryValue, args...).Scan(&count, &oldest); err != nil {
 			return 0, time.Time{}, err
 		}
 		if oldest.Valid {

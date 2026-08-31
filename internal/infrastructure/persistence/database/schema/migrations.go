@@ -1,17 +1,14 @@
-// Package migrations contains Lifecycle-owned, portable schema declarations.
+// Package schema contains Lifecycle-owned, portable schema declarations.
 // Dialect differences are rendered exclusively by domainry-orm.
 package schema
 
 import (
-	"context"
 	"fmt"
 	ormschema "github.com/domainry/domainry-orm/schema"
 
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
 	ormmigration "github.com/domainry/domainry-orm/migration"
 )
-
-const Owner = "lifecycle"
 
 type table struct {
 	name    string
@@ -81,17 +78,6 @@ func Migrations(renderer modulehost.Dialect) ([]modulehost.SchemaMigration, erro
 		}
 	}
 	return []modulehost.SchemaMigration{{Version: 1, Name: "foundation", Statements: statements, Baseline: &baseline}}, nil
-}
-
-func Apply(ctx context.Context, host modulehost.Host) error {
-	if host == nil || host.Migrations() == nil {
-		return fmt.Errorf("lifecycle migrations require host registrar")
-	}
-	values, err := Migrations(host.Dialect())
-	if err != nil {
-		return err
-	}
-	return host.Migrations().ApplyOwnedMigrations(ctx, Owner, values)
 }
 
 func key(name string) ormschema.ColumnDefinition {
