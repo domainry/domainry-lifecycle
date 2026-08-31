@@ -10,13 +10,10 @@ import (
 )
 
 type (
-	LifecycleStore            = database.LifecycleStore
-	FileArtifactStore         = database.FileArtifactStore
-	FileArtifactStoreOption   = database.FileArtifactStoreOption
-	ArchiveWriter             = database.ArchiveWriter
-	RelationalCleanupSpec     = database.RelationalCleanupSpec
-	RelationalReferenceCheck  = database.RelationalReferenceCheck
-	RelationalChildCollection = database.RelationalChildCollection
+	LifecycleStore          = database.LifecycleStore
+	FileArtifactStore       = database.FileArtifactStore
+	FileArtifactStoreOption = database.FileArtifactStoreOption
+	ArchiveWriter           = database.ArchiveWriter
 )
 
 func NewLifecycleStore(host modulehost.Host) LifecycleStore {
@@ -40,7 +37,3 @@ func NewSubjectArtifactStore(root string) contract.SubjectArtifactStore {
 }
 
 func NewArchiveWriter(host modulehost.Host) ArchiveWriter { return database.NewArchiveWriter(host) }
-
-func NewRelationalOwnerExecutor(host modulehost.Host, owner string, specs ...RelationalCleanupSpec) contract.OwnerLifecycleExecutor {
-	return database.NewRelationalOwnerExecutor(host, owner, specs...)
-}

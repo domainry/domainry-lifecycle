@@ -581,6 +581,66 @@ func (s LifecycleStore) ListPendingDeletionRegistrations(ctx context.Context, wo
 	return registrations, rows.Err()
 }
 
+func (s LifecycleStore) ListSubjectExecutionSteps(ctx context.Context, workspaceID, requestID string) ([]lifecyclemodel.SubjectExecutionStep, error) {
+	queryValue, args, buildErr := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_subject_execution_steps", workspaceID).
+		Columns("payload_json").Where(query.Equal("request_id", requestID)).
+		OrderBy(query.Ascending("owner"), query.Ascending("operation")).Build()
+	if buildErr != nil {
+		return nil, fmt.Errorf("build subject execution step list: %w", buildErr)
+	}
+	rows, err := s.database(ctx).QueryContext(ctx, queryValue, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var steps []lifecyclemodel.SubjectExecutionStep
+	for rows.Next() {
+		var payload string
+		if err := rows.Scan(&payload); err != nil {
+			return nil, err
+		}
+		var step lifecyclemodel.SubjectExecutionStep
+		if err := json.Unmarshal([]byte(payload), &step); err != nil {
+			return nil, err
+		}
+		steps = append(steps, step)
+	}
+	return steps, rows.Err()
+}
+
+func (s LifecycleStore) SaveSubjectExecutionStep(ctx context.Context, step lifecyclemodel.SubjectExecutionStep) error {
+	if strings.TrimSpace(step.WorkspaceID) == "" || strings.TrimSpace(step.RequestID) == "" || strings.TrimSpace(step.Owner) == "" || strings.TrimSpace(step.Operation) == "" || step.CompletedAt.IsZero() {
+		return fmt.Errorf("subject execution step identity and completion time are required")
+	}
+	payload, err := json.Marshal(step)
+	if err != nil {
+		return err
+	}
+	lookup, lookupArgs, buildErr := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_subject_execution_steps", step.WorkspaceID).
+		Columns("payload_json").Where(query.And(query.Equal("request_id", step.RequestID), query.Equal("owner", step.Owner), query.Equal("operation", step.Operation))).Build()
+	if buildErr != nil {
+		return fmt.Errorf("build subject execution step lookup: %w", buildErr)
+	}
+	var existing string
+	if err := s.database(ctx).QueryRowContext(ctx, lookup, lookupArgs...).Scan(&existing); err == nil {
+		var previous lifecyclemodel.SubjectExecutionStep
+		if json.Unmarshal([]byte(existing), &previous) != nil || string(previous.Payload) != string(step.Payload) {
+			return fmt.Errorf("subject execution step payload conflict")
+		}
+		return nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	queryValue, args, buildErr := query.NewWorkspaceInsertBuilder(s.renderer, "_lifecycle_subject_execution_steps", step.WorkspaceID).
+		Columns("request_id", "owner", "operation", "payload_json", "completed_at").
+		Values(step.RequestID, step.Owner, step.Operation, string(payload), lifecycleTime(step.CompletedAt)).Build()
+	if buildErr != nil {
+		return fmt.Errorf("build subject execution step insert: %w", buildErr)
+	}
+	_, err = s.database(ctx).ExecContext(ctx, queryValue, args...)
+	return err
+}
+
 func (s LifecycleStore) ListArchiveEntries(ctx context.Context, workspaceID, sourceTable string, limit int) ([]lifecyclemodel.ArchiveEntry, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100

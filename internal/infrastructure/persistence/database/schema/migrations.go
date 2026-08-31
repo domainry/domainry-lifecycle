@@ -26,7 +26,18 @@ func Migrations(renderer modulehost.Dialect) ([]modulehost.SchemaMigration, erro
 	if renderer == nil {
 		return nil, fmt.Errorf("lifecycle migrations require host dialect")
 	}
-	tableDefinitions, indexDefinitions := tables(), indexes()
+	foundation, err := buildMigration(renderer, 1, "foundation", tables(), indexes())
+	if err != nil {
+		return nil, err
+	}
+	executionSteps, err := buildMigration(renderer, 2, "subject_execution_steps", subjectExecutionStepTables(), subjectExecutionStepIndexes())
+	if err != nil {
+		return nil, err
+	}
+	return []modulehost.SchemaMigration{foundation, executionSteps}, nil
+}
+
+func buildMigration(renderer modulehost.Dialect, version uint, name string, tableDefinitions []table, indexDefinitions []index) (modulehost.SchemaMigration, error) {
 	statements := make([]string, 0, len(tableDefinitions)+len(indexDefinitions))
 	baseline := ormmigration.Baseline{Tables: make([]ormmigration.Table, 0, len(tableDefinitions))}
 	for _, definition := range tableDefinitions {
@@ -37,15 +48,15 @@ func Migrations(renderer modulehost.Dialect) ([]modulehost.SchemaMigration, erro
 		}
 		query, args, err := builder.Build()
 		if err != nil {
-			return nil, fmt.Errorf("build lifecycle table %s: %w", definition.name, err)
+			return modulehost.SchemaMigration{}, fmt.Errorf("build lifecycle table %s: %w", definition.name, err)
 		}
 		if len(args) != 0 {
-			return nil, fmt.Errorf("lifecycle table %s produced DDL arguments", definition.name)
+			return modulehost.SchemaMigration{}, fmt.Errorf("lifecycle table %s produced DDL arguments", definition.name)
 		}
 		statements = append(statements, query)
 		physical, err := builder.PhysicalTable()
 		if err != nil {
-			return nil, fmt.Errorf("build lifecycle baseline %s: %w", definition.name, err)
+			return modulehost.SchemaMigration{}, fmt.Errorf("build lifecycle baseline %s: %w", definition.name, err)
 		}
 		baselineTable := ormmigration.Table{Name: physical.Name, Columns: make([]ormmigration.Column, len(physical.Columns))}
 		for index, column := range physical.Columns {
@@ -64,10 +75,10 @@ func Migrations(renderer modulehost.Dialect) ([]modulehost.SchemaMigration, erro
 		}
 		query, args, err := builder.Build()
 		if err != nil {
-			return nil, fmt.Errorf("build lifecycle index %s: %w", definition.name, err)
+			return modulehost.SchemaMigration{}, fmt.Errorf("build lifecycle index %s: %w", definition.name, err)
 		}
 		if len(args) != 0 {
-			return nil, fmt.Errorf("lifecycle index %s produced DDL arguments", definition.name)
+			return modulehost.SchemaMigration{}, fmt.Errorf("lifecycle index %s produced DDL arguments", definition.name)
 		}
 		statements = append(statements, query)
 		for tableIndex := range baseline.Tables {
@@ -77,7 +88,7 @@ func Migrations(renderer modulehost.Dialect) ([]modulehost.SchemaMigration, erro
 			}
 		}
 	}
-	return []modulehost.SchemaMigration{{Version: 1, Name: "foundation", Statements: statements, Baseline: &baseline}}, nil
+	return modulehost.SchemaMigration{Version: version, Name: name, Statements: statements, Baseline: &baseline}, nil
 }
 
 func key(name string) ormschema.ColumnDefinition {
@@ -131,4 +142,14 @@ func indexes() []index {
 		{"_lifecycle_file_artifacts", "uniq_lifecycle_file_workspace_identity", true, []string{"workspace_id", "id"}},
 		{"_lifecycle_file_artifacts", "idx_lifecycle_file_cleanup", false, []string{"status", "delete_after", "created_at"}},
 	}
+}
+
+func subjectExecutionStepTables() []table {
+	return []table{{"_lifecycle_subject_execution_steps", []ormschema.ColumnDefinition{
+		key("workspace_id"), key("request_id"), key("owner"), key("operation"), text("payload_json"), key("completed_at"),
+	}, []string{"workspace_id", "request_id", "owner", "operation"}}}
+}
+
+func subjectExecutionStepIndexes() []index {
+	return []index{{"_lifecycle_subject_execution_steps", "idx_lifecycle_subject_execution_request", false, []string{"workspace_id", "request_id", "completed_at"}}}
 }

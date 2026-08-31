@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	lifecyclemodel "github.com/domainry/domainry-lifecycle-sdk/model"
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
+	lifecyclemodel "github.com/domainry/domainry-lifecycle/internal/domain/lifecycle/model"
 	schema "github.com/domainry/domainry-lifecycle/internal/infrastructure/persistence/database/schema"
 	ormdialect "github.com/domainry/domainry-orm/dialect"
 	_ "modernc.org/sqlite"

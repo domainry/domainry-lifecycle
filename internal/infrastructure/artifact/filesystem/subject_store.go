@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	requestcontext "github.com/domainry/domainry-foundation/requestcontext"
 	lifecycleaccess "github.com/domainry/domainry-lifecycle-sdk/access"
 	lifecyclecontract "github.com/domainry/domainry-lifecycle-sdk/contract"
 )
@@ -45,7 +44,9 @@ func (s *SubjectStore) PutSubjectExport(ctx context.Context, workspaceID, reques
 	if err := localMkdirAll(s.directory, 0o700); err != nil {
 		return "", err
 	}
-	reference := requestID + "-" + requestcontext.NewRequestID()
+	// The request ID is the retry identity. Rewriting the same path after a
+	// process crash is safe and prevents orphaned duplicate exports.
+	reference := requestID + "-export"
 	raw, err := json.Marshal(lifecycleSubjectArtifact{WorkspaceID: workspaceID, ExpiresAt: expiresAt, Payload: payload})
 	if err != nil {
 		return "", err
