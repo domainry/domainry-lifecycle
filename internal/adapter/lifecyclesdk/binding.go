@@ -10,20 +10,20 @@ import (
 	sdk "github.com/domainry/domainry-lifecycle-sdk"
 	"github.com/domainry/domainry-lifecycle-sdk/contract"
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
-	"github.com/domainry/domainry-lifecycle-sdk/repository"
+	sdkpersistence "github.com/domainry/domainry-lifecycle-sdk/persistence"
 	lifecycleapplication "github.com/domainry/domainry-lifecycle/internal/application/lifecycle"
-	persistence "github.com/domainry/domainry-lifecycle/internal/infrastructure/persistence"
+	infra "github.com/domainry/domainry-lifecycle/internal/infrastructure/persistence"
 )
 
 type Binding struct {
-	repository   persistence.LifecycleStore
+	repository   infra.LifecycleStore
 	host         modulehost.Host
 	transactions *lifecycleapplication.TransactionApplicationService
 }
 
 func NewBinding(host modulehost.Host) *Binding {
 	return &Binding{
-		repository:   persistence.NewLifecycleStore(host),
+		repository:   infra.NewLifecycleStore(host),
 		host:         host,
 		transactions: lifecycleapplication.NewTransactionApplicationService(host.Transactions()),
 	}
@@ -40,7 +40,7 @@ func (*Binding) Descriptor() sdk.Descriptor {
 	}
 }
 
-func (b *Binding) Repository() repository.LifecycleRepository {
+func (b *Binding) Repository() sdkpersistence.LifecycleRepository {
 	if b == nil {
 		return nil
 	}
@@ -51,28 +51,28 @@ func (b *Binding) UploadArtifacts(options sdk.UploadArtifactOptions) (contract.U
 	if b == nil || b.host == nil || strings.TrimSpace(options.Root) == "" || options.Fields == nil {
 		return nil, fmt.Errorf("Lifecycle upload artifact options are incomplete")
 	}
-	storeOptions := make([]persistence.FileArtifactStoreOption, 0, 2)
+	storeOptions := make([]infra.FileArtifactStoreOption, 0, 2)
 	if options.References != nil {
-		storeOptions = append(storeOptions, persistence.WithUploadArtifactReferences(options.References))
+		storeOptions = append(storeOptions, infra.WithUploadArtifactReferences(options.References))
 	}
 	if options.ExpiredReferences != nil {
-		storeOptions = append(storeOptions, persistence.WithExpiredUploadReferenceCleaner(options.ExpiredReferences))
+		storeOptions = append(storeOptions, infra.WithExpiredUploadReferenceCleaner(options.ExpiredReferences))
 	}
-	return persistence.NewFileArtifactStore(b.host, options.Fields, options.Root, storeOptions...), nil
+	return infra.NewFileArtifactStore(b.host, options.Fields, options.Root, storeOptions...), nil
 }
 
 func (*Binding) SubjectArtifacts(root string) (contract.SubjectArtifactStore, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, fmt.Errorf("Lifecycle subject artifact root is required")
 	}
-	return persistence.NewSubjectArtifactStore(root), nil
+	return infra.NewSubjectArtifactStore(root), nil
 }
 
 func (b *Binding) ArchiveStore() contract.ArchiveStore {
 	if b == nil {
-		return persistence.NewArchiveWriter(nil)
+		return infra.NewArchiveWriter(nil)
 	}
-	return persistence.NewArchiveWriter(b.host)
+	return infra.NewArchiveWriter(b.host)
 }
 
 func (b *Binding) WithinTransaction(ctx context.Context, operation func(context.Context) error) error {

@@ -2,14 +2,14 @@
 // public SDK contract while keeping implementation dependencies classified.
 package repository
 
-import sdkrepository "github.com/domainry/domainry-lifecycle-sdk/repository"
+import sdkpersistence "github.com/domainry/domainry-lifecycle-sdk/persistence"
 
 type (
-	PolicyRepository                   = sdkrepository.PolicyRepository
-	LegalHoldRepository                = sdkrepository.LegalHoldRepository
-	CleanupJobRepository               = sdkrepository.CleanupJobRepository
-	SubjectRequestRepository           = sdkrepository.SubjectRequestRepository
-	SubjectRequestTransitionRepository = sdkrepository.SubjectRequestTransitionRepository
-	LifecycleEvidenceRepository        = sdkrepository.LifecycleEvidenceRepository
-	LifecycleRepository                = sdkrepository.LifecycleRepository
+	PolicyRepository                   = sdkpersistence.PolicyRepository
+	LegalHoldRepository                = sdkpersistence.LegalHoldRepository
+	CleanupJobRepository               = sdkpersistence.CleanupJobRepository
+	SubjectRequestRepository           = sdkpersistence.SubjectRequestRepository
+	SubjectRequestTransitionRepository = sdkpersistence.SubjectRequestTransitionRepository
+	LifecycleEvidenceRepository        = sdkpersistence.LifecycleEvidenceRepository
+	LifecycleRepository                = sdkpersistence.LifecycleRepository
 )
