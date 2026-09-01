@@ -2,23 +2,20 @@ package modulehttptransport
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/domainry/domainry-foundation/modulehttp"
 	lifecyclesdk "github.com/domainry/domainry-lifecycle-sdk"
-)
-
-const (
-	readAudit     = "owner_read_audit_policy"
-	mutationAudit = "mutation_audit_required"
-	noIdempotency = "not_applicable"
-	callerKey     = "caller_key_required"
+	lifecycleapplication "github.com/domainry/domainry-lifecycle/internal/application/lifecycle"
 )
 
 type lifecycleHTTPSurface struct {
-	handler http.Handler
-	routes  []modulehttp.Route
+	handler    http.Handler
+	routes     []modulehttp.Route
+	operations map[string]map[string]any
 }
 
 func (*lifecycleHTTPSurface) ContractVersion() string { return modulehttp.ContractVersion }
@@ -30,7 +27,7 @@ func (s *lifecycleHTTPSurface) Routes() []modulehttp.Route {
 }
 
 func (s *lifecycleHTTPSurface) OpenAPIOperations() map[string]map[string]any {
-	return lifecycleOpenAPIOperations()
+	return s.operations
 }
 
 func NewSurface(governance lifecyclesdk.Governance) (modulehttp.Surface, error) {
@@ -38,59 +35,59 @@ func NewSurface(governance lifecyclesdk.Governance) (modulehttp.Surface, error) 
 		return nil, errors.New("Lifecycle module HTTP governance is unavailable")
 	}
 	handler := &lifecycleHTTPHandler{governance: governance, mux: http.NewServeMux()}
-	handler.register()
-	routes := lifecycleRoutes()
-	return &lifecycleHTTPSurface{handler: handler.mux, routes: routes}, nil
-}
-
-func lifecycleRoutes() []modulehttp.Route {
-	return []modulehttp.Route{
-		readRoute("GET /operations/lifecycle/policies", lifecyclesdk.PermissionPolicyManage),
-		writeRoute("POST /operations/lifecycle/policies", lifecyclesdk.PermissionPolicyManage, modulehttp.HighRiskReasonRequired),
-		writeRoute("POST /operations/lifecycle/legal-holds", lifecyclesdk.PermissionPolicyManage, modulehttp.HighRiskReasonRequired),
-		writeRoute("POST /operations/lifecycle/legal-holds/{holdID}/end", lifecyclesdk.PermissionPolicyManage, modulehttp.HighRiskReasonRequired),
-		readRoute("GET /operations/lifecycle/cleanup/preview", lifecyclesdk.PermissionCleanupRun),
-		writeRoute("POST /operations/lifecycle/cleanup/jobs", lifecyclesdk.PermissionCleanupRun, modulehttp.HighRiskReasonRequired),
-		readRoute("GET /operations/lifecycle/metrics", lifecyclesdk.PermissionPolicyManage),
-		readRoute("GET /operations/lifecycle/archive", lifecyclesdk.PermissionPolicyManage),
-		writeRoute("POST /operations/lifecycle/subjects", lifecyclesdk.PermissionSubjectManage, modulehttp.HighRiskReasonRequired),
-		writeRoute("POST /operations/lifecycle/subjects/{requestID}/verify", lifecyclesdk.PermissionSubjectManage, modulehttp.HighRiskReasonRequired),
-		readPOSTRoute("POST /operations/lifecycle/subjects/{requestID}/preview", lifecyclesdk.PermissionSubjectManage),
-		writeRoute("POST /operations/lifecycle/subjects/{requestID}/approve", lifecyclesdk.PermissionSubjectManage, modulehttp.HighRiskConfirmationRequired),
-		writeRoute("POST /operations/lifecycle/subjects/{requestID}/execute", lifecyclesdk.PermissionSubjectManage, modulehttp.HighRiskConfirmationRequired),
-		readRoute("GET /operations/lifecycle/subjects/{requestID}/download", lifecyclesdk.PermissionSubjectManage),
-		readRoute("GET /operations/lifecycle/external-erasures", lifecyclesdk.PermissionSubjectManage),
-		writeRoute("POST /operations/lifecycle/external-erasures/{erasureID}/reconcile", lifecyclesdk.PermissionSubjectManage, modulehttp.HighRiskConfirmationRequired),
-		writeRoute("POST /operations/lifecycle/deletions/replay", lifecyclesdk.PermissionSubjectManage, modulehttp.HighRiskConfirmationRequired),
+	routes, err := lifecycleRoutes()
+	if err != nil {
+		return nil, err
 	}
-}
-
-func readRoute(pattern, permission string) modulehttp.Route {
-	return lifecycleRoute(pattern, permission, modulehttp.EffectRead, modulehttp.HighRiskNone, noIdempotency, readAudit)
-}
-
-func readPOSTRoute(pattern, permission string) modulehttp.Route {
-	return readRoute(pattern, permission)
-}
-
-func writeRoute(pattern, permission string, risk modulehttp.HighRiskPolicy) modulehttp.Route {
-	return lifecycleRoute(pattern, permission, modulehttp.EffectWrite, risk, callerKey, mutationAudit)
-}
-
-func lifecycleRoute(pattern, permission string, effect modulehttp.EffectClass, risk modulehttp.HighRiskPolicy, idempotency, audit string) modulehttp.Route {
-	return modulehttp.Route{
-		Pattern: pattern,
-		Exposures: []modulehttp.Exposure{
-			modulehttp.ExposureTenantAdmin,
-			modulehttp.ExposureOps,
-		},
-		Authentication: modulehttp.AuthenticationAuthenticated,
-		Permission:     strings.TrimSpace(permission),
-		Governance: &modulehttp.Governance{
-			EffectClass: effect, HighRiskPolicy: risk,
-			IdempotencyDecision: idempotency, AuditClass: audit,
-		},
+	handlers := handler.handlers()
+	byAction := lifecycleOpenAPIOperationsByAction()
+	operations := make(map[string]map[string]any, len(routes))
+	for _, route := range routes {
+		key := strings.TrimSpace(route.Action.Key)
+		implementation, found := handlers[key]
+		if !found {
+			return nil, fmt.Errorf("Lifecycle Action %q has no HTTP handler", key)
+		}
+		operation, found := byAction[key]
+		if !found {
+			return nil, fmt.Errorf("Lifecycle Action %q has no OpenAPI operation", key)
+		}
+		handler.mux.HandleFunc(route.Pattern(), implementation)
+		operations[route.Pattern()] = operation
+		delete(handlers, key)
+		delete(byAction, key)
 	}
+	if len(handlers) != 0 || len(byAction) != 0 {
+		keys := make([]string, 0, len(handlers)+len(byAction))
+		for key := range handlers {
+			keys = append(keys, "handler:"+key)
+		}
+		for key := range byAction {
+			keys = append(keys, "openapi:"+key)
+		}
+		sort.Strings(keys)
+		return nil, fmt.Errorf("Lifecycle implementations have no Action manifest entries: %v", keys)
+	}
+	return &lifecycleHTTPSurface{handler: handler.mux, routes: routes, operations: operations}, nil
+}
+
+func lifecycleRoutes() ([]modulehttp.Route, error) {
+	definitions, err := lifecycleapplication.AuthorizationActions()
+	if err != nil {
+		return nil, err
+	}
+	routes := make([]modulehttp.Route, 0, len(definitions))
+	for _, definition := range definitions {
+		if definition.HTTP == nil {
+			continue
+		}
+		route, err := modulehttp.RouteFromAction(definition)
+		if err != nil {
+			return nil, fmt.Errorf("project Lifecycle Action %q: %w", definition.Key, err)
+		}
+		routes = append(routes, route)
+	}
+	return routes, nil
 }
 
 var _ modulehttp.Surface = (*lifecycleHTTPSurface)(nil)

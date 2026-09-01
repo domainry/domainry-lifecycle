@@ -19,24 +19,26 @@ type lifecycleHTTPHandler struct {
 	mux        *http.ServeMux
 }
 
-func (h *lifecycleHTTPHandler) register() {
-	h.mux.HandleFunc("GET /operations/lifecycle/policies", h.policies)
-	h.mux.HandleFunc("POST /operations/lifecycle/policies", h.publishPolicy)
-	h.mux.HandleFunc("POST /operations/lifecycle/legal-holds", h.createLegalHold)
-	h.mux.HandleFunc("POST /operations/lifecycle/legal-holds/{holdID}/end", h.endLegalHold)
-	h.mux.HandleFunc("GET /operations/lifecycle/cleanup/preview", h.cleanupPreview)
-	h.mux.HandleFunc("POST /operations/lifecycle/cleanup/jobs", h.createCleanupJob)
-	h.mux.HandleFunc("GET /operations/lifecycle/metrics", h.metrics)
-	h.mux.HandleFunc("GET /operations/lifecycle/archive", h.archiveEntries)
-	h.mux.HandleFunc("POST /operations/lifecycle/subjects", h.createSubjectRequest)
-	h.mux.HandleFunc("POST /operations/lifecycle/subjects/{requestID}/verify", h.verifySubjectRequest)
-	h.mux.HandleFunc("POST /operations/lifecycle/subjects/{requestID}/preview", h.previewSubjectRequest)
-	h.mux.HandleFunc("POST /operations/lifecycle/subjects/{requestID}/approve", h.approveSubjectRequest)
-	h.mux.HandleFunc("POST /operations/lifecycle/subjects/{requestID}/execute", h.executeSubjectRequest)
-	h.mux.HandleFunc("GET /operations/lifecycle/subjects/{requestID}/download", h.downloadSubjectExport)
-	h.mux.HandleFunc("GET /operations/lifecycle/external-erasures", h.externalErasures)
-	h.mux.HandleFunc("POST /operations/lifecycle/external-erasures/{erasureID}/reconcile", h.reconcileExternalErasure)
-	h.mux.HandleFunc("POST /operations/lifecycle/deletions/replay", h.replayDeletions)
+func (h *lifecycleHTTPHandler) handlers() map[string]http.HandlerFunc {
+	return map[string]http.HandlerFunc{
+		lifecyclesdk.ActionLifecyclePoliciesList:              h.policies,
+		lifecyclesdk.ActionLifecyclePoliciesPublish:           h.publishPolicy,
+		lifecyclesdk.ActionLifecycleLegalHoldsCreate:          h.createLegalHold,
+		lifecyclesdk.ActionLifecycleLegalHoldsEnd:             h.endLegalHold,
+		lifecyclesdk.ActionLifecycleCleanupPreview:            h.cleanupPreview,
+		lifecyclesdk.ActionLifecycleCleanupJobsCreate:         h.createCleanupJob,
+		lifecyclesdk.ActionLifecycleMetricsRead:               h.metrics,
+		lifecyclesdk.ActionLifecycleArchiveList:               h.archiveEntries,
+		lifecyclesdk.ActionLifecycleSubjectRequestsCreate:     h.createSubjectRequest,
+		lifecyclesdk.ActionLifecycleSubjectRequestsVerify:     h.verifySubjectRequest,
+		lifecyclesdk.ActionLifecycleSubjectRequestsPreview:    h.previewSubjectRequest,
+		lifecyclesdk.ActionLifecycleSubjectRequestsApprove:    h.approveSubjectRequest,
+		lifecyclesdk.ActionLifecycleSubjectRequestsExecute:    h.executeSubjectRequest,
+		lifecyclesdk.ActionLifecycleSubjectExportsDownload:    h.downloadSubjectExport,
+		lifecyclesdk.ActionLifecycleExternalErasuresList:      h.externalErasures,
+		lifecyclesdk.ActionLifecycleExternalErasuresReconcile: h.reconcileExternalErasure,
+		lifecyclesdk.ActionLifecycleDeletionsReplay:           h.replayDeletions,
+	}
 }
 
 type publishPolicyRequest struct {
@@ -74,7 +76,7 @@ type createSubjectRequest struct {
 }
 
 func (h *lifecycleHTTPHandler) policies(w http.ResponseWriter, r *http.Request) {
-	items, err := h.governance.ListPolicies(r.Context(), lifecyclePrincipal(r))
+	items, err := h.governance.ListPolicies(r.Context(), lifecyclePrincipal(r, lifecyclesdk.ActionLifecyclePoliciesList))
 	writeResult(w, map[string]any{"items": items, "count": len(items)}, err, http.StatusOK)
 }
 
@@ -86,7 +88,7 @@ func (h *lifecycleHTTPHandler) publishPolicy(w http.ResponseWriter, r *http.Requ
 	result, err := h.governance.PublishPolicy(r.Context(), lifecyclemodel.PolicyVersion{
 		Policy: input.Policy, Revision: input.Revision, ApprovalRef: input.ApprovalRef,
 		EstimatedRows: input.EstimatedRows, EstimatedBytes: input.EstimatedBytes, ChangePlanRef: input.ChangePlanRef,
-	}, lifecyclePrincipal(r))
+	}, lifecyclePrincipal(r, lifecyclesdk.ActionLifecyclePoliciesPublish))
 	writeResult(w, result, err, http.StatusCreated)
 }
 
@@ -95,7 +97,7 @@ func (h *lifecycleHTTPHandler) createLegalHold(w http.ResponseWriter, r *http.Re
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	principal := lifecyclePrincipal(r)
+	principal := lifecyclePrincipal(r, lifecyclesdk.ActionLifecycleLegalHoldsCreate)
 	result, err := h.governance.CreateLegalHold(r.Context(), lifecyclemodel.LegalHold{
 		WorkspaceID: principal.WorkspaceID, Owner: input.Owner, ResourceType: input.ResourceType,
 		ResourceID: input.ResourceID, Reason: input.Reason, Authority: input.Authority,
@@ -113,13 +115,13 @@ func (h *lifecycleHTTPHandler) endLegalHold(w http.ResponseWriter, r *http.Reque
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	principal := lifecyclePrincipal(r)
+	principal := lifecyclePrincipal(r, lifecyclesdk.ActionLifecycleLegalHoldsEnd)
 	result, err := h.governance.EndLegalHold(r.Context(), principal.WorkspaceID, strings.TrimSpace(r.PathValue("holdID")), input.Authority, input.Evidence, input.EndedAt, principal)
 	writeResult(w, result, err, http.StatusOK)
 }
 
 func (h *lifecycleHTTPHandler) cleanupPreview(w http.ResponseWriter, r *http.Request) {
-	principal := lifecyclePrincipal(r)
+	principal := lifecyclePrincipal(r, lifecyclesdk.ActionLifecycleCleanupPreview)
 	result, err := h.governance.PreviewCleanup(r.Context(), principal.WorkspaceID, strings.TrimSpace(r.URL.Query().Get("policy_key")), principal, time.Now().UTC())
 	writeResult(w, result, err, http.StatusOK)
 }
@@ -129,7 +131,7 @@ func (h *lifecycleHTTPHandler) createCleanupJob(w http.ResponseWriter, r *http.R
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	principal := lifecyclePrincipal(r)
+	principal := lifecyclePrincipal(r, lifecyclesdk.ActionLifecycleCleanupJobsCreate)
 	result, err := h.governance.CreateCleanupJob(r.Context(), lifecyclemodel.CleanupJob{
 		WorkspaceID: principal.WorkspaceID, PolicyKey: input.PolicyKey,
 		Operation: input.Operation, DryRun: input.DryRun, Reason: input.Reason,
@@ -138,13 +140,13 @@ func (h *lifecycleHTTPHandler) createCleanupJob(w http.ResponseWriter, r *http.R
 }
 
 func (h *lifecycleHTTPHandler) metrics(w http.ResponseWriter, r *http.Request) {
-	result, err := h.governance.Metrics(r.Context(), lifecyclePrincipal(r), time.Now().UTC())
+	result, err := h.governance.Metrics(r.Context(), lifecyclePrincipal(r, lifecyclesdk.ActionLifecycleMetricsRead), time.Now().UTC())
 	writeResult(w, result, err, http.StatusOK)
 }
 
 func (h *lifecycleHTTPHandler) archiveEntries(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	result, err := h.governance.ListArchiveEntries(r.Context(), strings.TrimSpace(r.URL.Query().Get("source_table")), limit, lifecyclePrincipal(r))
+	result, err := h.governance.ListArchiveEntries(r.Context(), strings.TrimSpace(r.URL.Query().Get("source_table")), limit, lifecyclePrincipal(r, lifecyclesdk.ActionLifecycleArchiveList))
 	writeResult(w, result, err, http.StatusOK)
 }
 
@@ -153,7 +155,7 @@ func (h *lifecycleHTTPHandler) createSubjectRequest(w http.ResponseWriter, r *ht
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	principal := lifecyclePrincipal(r)
+	principal := lifecyclePrincipal(r, lifecyclesdk.ActionLifecycleSubjectRequestsCreate)
 	result, err := h.governance.CreateSubjectRequest(r.Context(), lifecyclemodel.SubjectRequest{
 		WorkspaceID: principal.WorkspaceID, Kind: input.Kind, SubjectType: input.SubjectType,
 		SubjectID: input.SubjectID, Reason: input.Reason,
@@ -168,37 +170,37 @@ func (h *lifecycleHTTPHandler) verifySubjectRequest(w http.ResponseWriter, r *ht
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	principal := lifecyclePrincipal(r)
+	principal := lifecyclePrincipal(r, lifecyclesdk.ActionLifecycleSubjectRequestsVerify)
 	result, err := h.governance.VerifySubjectRequest(r.Context(), principal.WorkspaceID, strings.TrimSpace(r.PathValue("requestID")), input.SecondFactorRef, principal)
 	writeSubject(w, result, err, http.StatusOK)
 }
 
 func (h *lifecycleHTTPHandler) previewSubjectRequest(w http.ResponseWriter, r *http.Request) {
-	principal := lifecyclePrincipal(r)
+	principal := lifecyclePrincipal(r, lifecyclesdk.ActionLifecycleSubjectRequestsPreview)
 	result, err := h.governance.PreviewSubjectRequest(r.Context(), principal.WorkspaceID, strings.TrimSpace(r.PathValue("requestID")), principal)
 	writeSubject(w, result, err, http.StatusOK)
 }
 
 func (h *lifecycleHTTPHandler) approveSubjectRequest(w http.ResponseWriter, r *http.Request) {
-	principal := lifecyclePrincipal(r)
+	principal := lifecyclePrincipal(r, lifecyclesdk.ActionLifecycleSubjectRequestsApprove)
 	result, err := h.governance.ApproveSubjectRequest(r.Context(), principal.WorkspaceID, strings.TrimSpace(r.PathValue("requestID")), principal)
 	writeSubject(w, result, err, http.StatusOK)
 }
 
 func (h *lifecycleHTTPHandler) executeSubjectRequest(w http.ResponseWriter, r *http.Request) {
-	principal := lifecyclePrincipal(r)
+	principal := lifecyclePrincipal(r, lifecyclesdk.ActionLifecycleSubjectRequestsExecute)
 	result, err := h.governance.ExecuteSubjectRequest(r.Context(), principal.WorkspaceID, strings.TrimSpace(r.PathValue("requestID")), principal)
 	writeSubject(w, result, err, http.StatusOK)
 }
 
 func (h *lifecycleHTTPHandler) downloadSubjectExport(w http.ResponseWriter, r *http.Request) {
-	principal := lifecyclePrincipal(r)
+	principal := lifecyclePrincipal(r, lifecyclesdk.ActionLifecycleSubjectExportsDownload)
 	result, err := h.governance.DownloadSubjectExport(r.Context(), principal.WorkspaceID, strings.TrimSpace(r.PathValue("requestID")), principal, time.Now().UTC())
 	writeResult(w, map[string]any{"data": result}, err, http.StatusOK)
 }
 
 func (h *lifecycleHTTPHandler) externalErasures(w http.ResponseWriter, r *http.Request) {
-	result, err := h.governance.ListExternalErasures(r.Context(), strings.TrimSpace(r.URL.Query().Get("request_id")), lifecyclePrincipal(r))
+	result, err := h.governance.ListExternalErasures(r.Context(), strings.TrimSpace(r.URL.Query().Get("request_id")), lifecyclePrincipal(r, lifecyclesdk.ActionLifecycleExternalErasuresList))
 	writeResult(w, map[string]any{"items": result, "count": len(result)}, err, http.StatusOK)
 }
 
@@ -209,24 +211,22 @@ func (h *lifecycleHTTPHandler) reconcileExternalErasure(w http.ResponseWriter, r
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	result, err := h.governance.ReconcileExternalErasure(r.Context(), strings.TrimSpace(r.PathValue("erasureID")), input.Evidence, lifecyclePrincipal(r), time.Now().UTC())
+	result, err := h.governance.ReconcileExternalErasure(r.Context(), strings.TrimSpace(r.PathValue("erasureID")), input.Evidence, lifecyclePrincipal(r, lifecyclesdk.ActionLifecycleExternalErasuresReconcile), time.Now().UTC())
 	writeResult(w, result, err, http.StatusOK)
 }
 
 func (h *lifecycleHTTPHandler) replayDeletions(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	principal := lifecyclePrincipal(r)
+	principal := lifecyclePrincipal(r, lifecyclesdk.ActionLifecycleDeletionsReplay)
 	count, err := h.governance.ReplayRegisteredDeletions(r.Context(), principal.WorkspaceID, limit, principal)
 	writeResult(w, map[string]any{"replayed": count}, err, http.StatusOK)
 }
 
-func lifecyclePrincipal(r *http.Request) lifecycleaccess.Principal {
+func lifecyclePrincipal(r *http.Request, actionKey string) lifecycleaccess.Principal {
 	principal, known := identitysdk.PrincipalFromContext(r.Context())
-	permissions := make(map[string]struct{}, 3)
-	for _, permission := range []string{lifecyclesdk.PermissionPolicyManage, lifecyclesdk.PermissionCleanupRun, lifecyclesdk.PermissionSubjectManage} {
-		if principal.HasPermission(permission) {
-			permissions[permission] = struct{}{}
-		}
+	permissions := map[string]struct{}{}
+	if principal.HasPermission(actionKey) {
+		permissions[actionKey] = struct{}{}
 	}
 	return lifecycleaccess.Principal{UserID: principal.UserID, WorkspaceID: principal.WorkspaceID, Known: known && principal.Known, Permissions: permissions}
 }

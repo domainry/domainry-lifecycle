@@ -114,10 +114,22 @@ func lifecycleAuthorizeWorkspace(principal lifecycleaccess.Principal, workspaceI
 }
 
 func lifecycleAuthorizeWorkspaceOrSystem(principal lifecycleaccess.Principal, workspaceID, permission string) error {
-	if principal.Known && principal.SystemScope.Valid() {
-		return nil
+	if principal.Known {
+		if _, err := lifecycleaccess.NewSystemCommandScope(principal.SystemScope); err == nil {
+			return nil
+		}
 	}
 	return lifecycleAuthorizeWorkspace(principal, workspaceID, permission)
+}
+
+func lifecycleAuthorizeSystem(principal lifecycleaccess.Principal) error {
+	if !principal.Known {
+		return fmt.Errorf("auth.permission_denied")
+	}
+	if _, err := lifecycleaccess.NewSystemCommandScope(principal.SystemScope); err != nil {
+		return fmt.Errorf("auth.permission_denied")
+	}
+	return nil
 }
 
 func convertValue[T any](value any) (T, error) {

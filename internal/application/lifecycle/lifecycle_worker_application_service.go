@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	lifecyclesdk "github.com/domainry/domainry-lifecycle-sdk"
 	lifecycleaccess "github.com/domainry/domainry-lifecycle-sdk/access"
 	lifecyclemodel "github.com/domainry/domainry-lifecycle/internal/domain/lifecycle/model"
 )
@@ -28,7 +29,7 @@ func (s *LifecycleApplicationService) ProcessRunnableCleanupJobs(ctx context.Con
 // ReplayRegisteredDeletions is a restore gate: a restored workspace must run
 // its durable deletion registry before it can be exposed for normal traffic.
 func (s *LifecycleApplicationService) ReplayRegisteredDeletions(ctx context.Context, workspaceID string, limit int, principal lifecycleaccess.Principal) (int, error) {
-	if err := lifecycleAuthorizeWorkspaceOrSystem(principal, workspaceID, PermissionSubjectManage); err != nil {
+	if err := lifecycleAuthorizeWorkspaceOrSystem(principal, workspaceID, lifecyclesdk.ActionLifecycleDeletionsReplay); err != nil {
 		return 0, err
 	}
 	registrations, err := s.subjectRequests.ListPendingDeletionRegistrations(ctx, workspaceID, limit)

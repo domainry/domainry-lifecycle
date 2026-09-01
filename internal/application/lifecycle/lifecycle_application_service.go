@@ -8,6 +8,7 @@ import (
 	"time"
 
 	requestcontext "github.com/domainry/domainry-foundation/requestcontext"
+	lifecyclesdk "github.com/domainry/domainry-lifecycle-sdk"
 	lifecycleaccess "github.com/domainry/domainry-lifecycle-sdk/access"
 	lifecyclecontract "github.com/domainry/domainry-lifecycle-sdk/contract"
 	sdkmodel "github.com/domainry/domainry-lifecycle-sdk/model"
@@ -15,12 +16,6 @@ import (
 	lifecyclemodel "github.com/domainry/domainry-lifecycle/internal/domain/lifecycle/model"
 	lifecyclepersistence "github.com/domainry/domainry-lifecycle/internal/domain/lifecycle/repository"
 	lifecyclepolicy "github.com/domainry/domainry-lifecycle/internal/domain/lifecycle/service"
-)
-
-const (
-	PermissionPolicyManage  = "lifecycle.policy.manage"
-	PermissionCleanupRun    = "lifecycle.cleanup.run"
-	PermissionSubjectManage = "lifecycle.subject.manage"
 )
 
 type LifecycleApplicationDependencies struct {
@@ -64,7 +59,7 @@ func NewLifecycleApplicationService(ctx context.Context, deps LifecycleApplicati
 }
 
 func (s *LifecycleApplicationService) PublishPolicy(ctx context.Context, version lifecyclemodel.PolicyVersion, principal lifecycleaccess.Principal) (lifecyclemodel.PolicyVersion, error) {
-	if err := lifecycleAuthorize(principal, PermissionPolicyManage); err != nil {
+	if err := lifecycleAuthorize(principal, lifecyclesdk.ActionLifecyclePoliciesPublish); err != nil {
 		return lifecyclemodel.PolicyVersion{}, err
 	}
 	if s == nil || s.policies == nil {
@@ -107,14 +102,14 @@ func (s *LifecycleApplicationService) PublishPolicy(ctx context.Context, version
 }
 
 func (s *LifecycleApplicationService) ListPolicies(ctx context.Context, principal lifecycleaccess.Principal) ([]lifecyclemodel.PolicyVersion, error) {
-	if err := lifecycleAuthorize(principal, PermissionPolicyManage); err != nil {
+	if err := lifecycleAuthorize(principal, lifecyclesdk.ActionLifecyclePoliciesList); err != nil {
 		return nil, err
 	}
 	return s.policies.ListPolicies(ctx, principal.WorkspaceID)
 }
 
 func (s *LifecycleApplicationService) CreateLegalHold(ctx context.Context, hold lifecyclemodel.LegalHold, principal lifecycleaccess.Principal) (lifecyclemodel.LegalHold, error) {
-	if err := lifecycleAuthorize(principal, PermissionPolicyManage); err != nil {
+	if err := lifecycleAuthorize(principal, lifecyclesdk.ActionLifecycleLegalHoldsCreate); err != nil {
 		return lifecyclemodel.LegalHold{}, err
 	}
 	if hold.WorkspaceID != principal.WorkspaceID {
@@ -136,7 +131,7 @@ func (s *LifecycleApplicationService) CreateLegalHold(ctx context.Context, hold 
 }
 
 func (s *LifecycleApplicationService) EndLegalHold(ctx context.Context, workspaceID, holdID, authority, evidence string, endedAt time.Time, principal lifecycleaccess.Principal) (lifecyclemodel.LegalHold, error) {
-	if err := lifecycleAuthorizeWorkspace(principal, workspaceID, PermissionPolicyManage); err != nil {
+	if err := lifecycleAuthorizeWorkspace(principal, workspaceID, lifecyclesdk.ActionLifecycleLegalHoldsEnd); err != nil {
 		return lifecyclemodel.LegalHold{}, err
 	}
 	hold, found, err := s.legalHolds.GetLegalHold(ctx, workspaceID, holdID)
@@ -157,7 +152,7 @@ func (s *LifecycleApplicationService) EndLegalHold(ctx context.Context, workspac
 }
 
 func (s *LifecycleApplicationService) PreviewCleanup(ctx context.Context, workspaceID, policyKey string, principal lifecycleaccess.Principal, now time.Time) (lifecyclecontract.CleanupPreview, error) {
-	if err := lifecycleAuthorizeWorkspace(principal, workspaceID, PermissionCleanupRun); err != nil {
+	if err := lifecycleAuthorizeWorkspace(principal, workspaceID, lifecyclesdk.ActionLifecycleCleanupPreview); err != nil {
 		return lifecyclecontract.CleanupPreview{}, err
 	}
 	policyVersion, executor, err := s.policyExecutor(ctx, workspaceID, policyKey)
@@ -172,7 +167,7 @@ func (s *LifecycleApplicationService) PreviewCleanup(ctx context.Context, worksp
 }
 
 func (s *LifecycleApplicationService) CreateCleanupJob(ctx context.Context, job lifecyclemodel.CleanupJob, principal lifecycleaccess.Principal) (lifecyclemodel.CleanupJob, error) {
-	if err := lifecycleAuthorizeWorkspace(principal, job.WorkspaceID, PermissionCleanupRun); err != nil {
+	if err := lifecycleAuthorizeWorkspace(principal, job.WorkspaceID, lifecyclesdk.ActionLifecycleCleanupJobsCreate); err != nil {
 		return lifecyclemodel.CleanupJob{}, err
 	}
 	policyVersion, executor, err := s.policyExecutor(ctx, job.WorkspaceID, job.PolicyKey)
@@ -213,7 +208,7 @@ func (s *LifecycleApplicationService) CreateCleanupJob(ctx context.Context, job 
 }
 
 func (s *LifecycleApplicationService) ProcessCleanupJob(ctx context.Context, workspaceID, jobID, leaseOwner string, leaseTTL time.Duration, batchSize int, now time.Time, principal lifecycleaccess.Principal) (lifecyclemodel.CleanupJob, error) {
-	if err := lifecycleAuthorizeWorkspaceOrSystem(principal, workspaceID, PermissionCleanupRun); err != nil {
+	if err := lifecycleAuthorizeSystem(principal); err != nil {
 		return lifecyclemodel.CleanupJob{}, err
 	}
 	if batchSize <= 0 || batchSize > 1000 {
@@ -279,7 +274,7 @@ func (s *LifecycleApplicationService) ProcessCleanupJob(ctx context.Context, wor
 }
 
 func (s *LifecycleApplicationService) CreateSubjectRequest(ctx context.Context, request lifecyclemodel.SubjectRequest, principal lifecycleaccess.Principal) (lifecyclemodel.SubjectRequest, error) {
-	if err := lifecycleAuthorizeWorkspace(principal, request.WorkspaceID, PermissionSubjectManage); err != nil {
+	if err := lifecycleAuthorizeWorkspace(principal, request.WorkspaceID, lifecyclesdk.ActionLifecycleSubjectRequestsCreate); err != nil {
 		return lifecyclemodel.SubjectRequest{}, err
 	}
 	if request.ID == "" {
@@ -303,7 +298,7 @@ func (s *LifecycleApplicationService) CreateSubjectRequest(ctx context.Context, 
 }
 
 func (s *LifecycleApplicationService) VerifySubjectRequest(ctx context.Context, workspaceID, requestID, secondFactor string, principal lifecycleaccess.Principal) (lifecyclemodel.SubjectRequest, error) {
-	if err := lifecycleAuthorizeWorkspace(principal, workspaceID, PermissionSubjectManage); err != nil {
+	if err := lifecycleAuthorizeWorkspace(principal, workspaceID, lifecyclesdk.ActionLifecycleSubjectRequestsVerify); err != nil {
 		return lifecyclemodel.SubjectRequest{}, err
 	}
 	request, err := s.subjectRequest(ctx, workspaceID, requestID)
@@ -323,7 +318,7 @@ func (s *LifecycleApplicationService) VerifySubjectRequest(ctx context.Context, 
 }
 
 func (s *LifecycleApplicationService) PreviewSubjectRequest(ctx context.Context, workspaceID, requestID string, principal lifecycleaccess.Principal) (lifecyclemodel.SubjectRequest, error) {
-	if err := lifecycleAuthorizeWorkspace(principal, workspaceID, PermissionSubjectManage); err != nil {
+	if err := lifecycleAuthorizeWorkspace(principal, workspaceID, lifecyclesdk.ActionLifecycleSubjectRequestsPreview); err != nil {
 		return lifecyclemodel.SubjectRequest{}, err
 	}
 	request, err := s.subjectRequest(ctx, workspaceID, requestID)
@@ -345,7 +340,7 @@ func (s *LifecycleApplicationService) PreviewSubjectRequest(ctx context.Context,
 }
 
 func (s *LifecycleApplicationService) ApproveSubjectRequest(ctx context.Context, workspaceID, requestID string, principal lifecycleaccess.Principal) (lifecyclemodel.SubjectRequest, error) {
-	if err := lifecycleAuthorizeWorkspace(principal, workspaceID, PermissionSubjectManage); err != nil {
+	if err := lifecycleAuthorizeWorkspace(principal, workspaceID, lifecyclesdk.ActionLifecycleSubjectRequestsApprove); err != nil {
 		return lifecyclemodel.SubjectRequest{}, err
 	}
 	request, err := s.subjectRequest(ctx, workspaceID, requestID)
@@ -358,7 +353,7 @@ func (s *LifecycleApplicationService) ApproveSubjectRequest(ctx context.Context,
 }
 
 func (s *LifecycleApplicationService) ExecuteSubjectRequest(ctx context.Context, workspaceID, requestID string, principal lifecycleaccess.Principal) (lifecyclemodel.SubjectRequest, error) {
-	if err := lifecycleAuthorizeWorkspaceOrSystem(principal, workspaceID, PermissionSubjectManage); err != nil {
+	if err := lifecycleAuthorizeWorkspaceOrSystem(principal, workspaceID, lifecyclesdk.ActionLifecycleSubjectRequestsExecute); err != nil {
 		return lifecyclemodel.SubjectRequest{}, err
 	}
 	request, err := s.subjectRequest(ctx, workspaceID, requestID)

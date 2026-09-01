@@ -27,7 +27,11 @@ func TestLifecycleCapabilityTracksOwnerRoutesWithoutInventedAuthoringValidation(
 			t.Fatalf("Lifecycle runtime request DTOs leaked into model validation scopes: %v", category.ValidationScopes)
 		}
 	}
-	if operations != len(lifecycleRoutes()) {
-		t.Fatalf("Lifecycle disclosure operations=%d routes=%d", operations, len(lifecycleRoutes()))
+	routes, err := lifecycleRoutes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operations != len(routes) {
+		t.Fatalf("Lifecycle disclosure operations=%d routes=%d", operations, len(routes))
 	}
 }

@@ -14,7 +14,10 @@ func (s *LifecycleApplicationService) InstallDefaultPolicies(ctx context.Context
 	if s == nil || s.policies == nil {
 		return fmt.Errorf("lifecycle repository unavailable")
 	}
-	if err := lifecycleAuthorizeWorkspaceOrSystem(principal, workspaceID, PermissionPolicyManage); err != nil {
+	if err := lifecycleAuthorizeSystem(principal); err != nil {
+		return err
+	}
+	if err := lifecycleaccess.ValidateWorkspaceID(workspaceID); err != nil {
 		return err
 	}
 	ctx = requestcontext.WithWorkspaceID(ctx, workspaceID)

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	lifecyclesdk "github.com/domainry/domainry-lifecycle-sdk"
 	lifecycleaccess "github.com/domainry/domainry-lifecycle-sdk/access"
 	lifecyclemodel "github.com/domainry/domainry-lifecycle/internal/domain/lifecycle/model"
 )
@@ -56,7 +57,7 @@ func (*evidenceMemory) GlobalMetrics(context.Context, lifecycleaccess.SystemScop
 func TestPolicyUseCaseOwnsServerFieldsAuthorizationAndAudit(t *testing.T) {
 	policies, evidence := &policyMemory{}, &evidenceMemory{}
 	service := NewLifecycleApplicationService(t.Context(), LifecycleApplicationDependencies{Policies: policies, Evidence: evidence})
-	principal := lifecycleaccess.Principal{UserID: "admin", WorkspaceID: "workspace-a", Known: true, Permissions: map[string]struct{}{PermissionPolicyManage: {}}}
+	principal := lifecycleaccess.Principal{UserID: "admin", WorkspaceID: "workspace-a", Known: true, Permissions: map[string]struct{}{lifecyclesdk.ActionLifecyclePoliciesPublish: {}}}
 	value := lifecyclemodel.PolicyVersion{Policy: lifecyclemodel.RetentionPolicy{Key: "record.default", Version: "1", Owner: "record", Class: lifecyclemodel.RetentionClassProduct, DefaultRetention: 24 * time.Hour, MinimumRetention: time.Hour, BackupBehavior: lifecyclemodel.BackupBehaviorStandard, EraseBehavior: lifecyclemodel.EraseBehaviorDelete}}
 	created, err := service.PublishPolicy(t.Context(), value, principal)
 	if err != nil {

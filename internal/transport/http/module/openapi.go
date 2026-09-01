@@ -4,11 +4,12 @@ import (
 	"time"
 
 	"github.com/domainry/domainry-foundation/modulecapability"
+	lifecyclesdk "github.com/domainry/domainry-lifecycle-sdk"
 )
 
-func lifecycleOpenAPIOperations() map[string]map[string]any {
+func lifecycleOpenAPIOperationsByAction() map[string]map[string]any {
 	operations := map[string]map[string]any{}
-	add := func(pattern, operationID, summary, success string, body any, parameters ...map[string]any) {
+	add := func(actionKey, operationID, summary, success string, body any, parameters ...map[string]any) {
 		operation := map[string]any{
 			"operationId": operationID,
 			"tags":        []string{"Lifecycle"},
@@ -35,7 +36,7 @@ func lifecycleOpenAPIOperations() map[string]map[string]any {
 			}
 			operation["parameters"] = values
 		}
-		operations[pattern] = operation
+		operations[actionKey] = operation
 	}
 	path := func(name string) map[string]any {
 		return map[string]any{"name": name, "in": "path", "required": true, "schema": map[string]any{"type": "string", "minLength": 1}}
@@ -43,31 +44,31 @@ func lifecycleOpenAPIOperations() map[string]map[string]any {
 	query := func(name string, required bool, schema map[string]any) map[string]any {
 		return map[string]any{"name": name, "in": "query", "required": required, "schema": schema}
 	}
-	add("GET /operations/lifecycle/policies", "listLifecyclePolicies", "List retention policy versions", "200", nil)
-	add("POST /operations/lifecycle/policies", "publishLifecyclePolicy", "Publish a retention policy version", "201", publishPolicyRequest{})
-	add("POST /operations/lifecycle/legal-holds", "createLifecycleLegalHold", "Create a legal hold", "201", createLegalHoldRequest{})
-	add("POST /operations/lifecycle/legal-holds/{holdID}/end", "endLifecycleLegalHold", "End a legal hold with evidence", "200", struct {
+	add(lifecyclesdk.ActionLifecyclePoliciesList, "listLifecyclePolicies", "List retention policy versions", "200", nil)
+	add(lifecyclesdk.ActionLifecyclePoliciesPublish, "publishLifecyclePolicy", "Publish a retention policy version", "201", publishPolicyRequest{})
+	add(lifecyclesdk.ActionLifecycleLegalHoldsCreate, "createLifecycleLegalHold", "Create a legal hold", "201", createLegalHoldRequest{})
+	add(lifecyclesdk.ActionLifecycleLegalHoldsEnd, "endLifecycleLegalHold", "End a legal hold with evidence", "200", struct {
 		Authority string    `json:"authority"`
 		Evidence  string    `json:"evidence"`
 		EndedAt   time.Time `json:"ended_at"`
 	}{}, path("holdID"))
-	add("GET /operations/lifecycle/cleanup/preview", "previewLifecycleCleanup", "Preview retention cleanup impact", "200", nil, query("policy_key", true, map[string]any{"type": "string", "minLength": 1}))
-	add("POST /operations/lifecycle/cleanup/jobs", "createLifecycleCleanupJob", "Create a retention cleanup job", "202", createCleanupJobRequest{})
-	add("GET /operations/lifecycle/metrics", "getLifecycleMetrics", "Get lifecycle backlog metrics", "200", nil)
-	add("GET /operations/lifecycle/archive", "listLifecycleArchive", "List sanitized archive evidence", "200", nil,
+	add(lifecyclesdk.ActionLifecycleCleanupPreview, "previewLifecycleCleanup", "Preview retention cleanup impact", "200", nil, query("policy_key", true, map[string]any{"type": "string", "minLength": 1}))
+	add(lifecyclesdk.ActionLifecycleCleanupJobsCreate, "createLifecycleCleanupJob", "Create a retention cleanup job", "202", createCleanupJobRequest{})
+	add(lifecyclesdk.ActionLifecycleMetricsRead, "getLifecycleMetrics", "Get lifecycle backlog metrics", "200", nil)
+	add(lifecyclesdk.ActionLifecycleArchiveList, "listLifecycleArchive", "List sanitized archive evidence", "200", nil,
 		query("source_table", false, map[string]any{"type": "string"}), query("limit", false, map[string]any{"type": "integer", "minimum": 1}))
-	add("POST /operations/lifecycle/subjects", "createLifecycleSubjectRequest", "Create a governed subject request", "202", createSubjectRequest{})
-	add("POST /operations/lifecycle/subjects/{requestID}/verify", "verifyLifecycleSubjectRequest", "Verify a subject request", "200", struct {
+	add(lifecyclesdk.ActionLifecycleSubjectRequestsCreate, "createLifecycleSubjectRequest", "Create a governed subject request", "202", createSubjectRequest{})
+	add(lifecyclesdk.ActionLifecycleSubjectRequestsVerify, "verifyLifecycleSubjectRequest", "Verify a subject request", "200", struct {
 		SecondFactorRef string `json:"second_factor_ref"`
 	}{}, path("requestID"))
-	add("POST /operations/lifecycle/subjects/{requestID}/preview", "previewLifecycleSubjectRequest", "Preview subject request impact", "200", nil, path("requestID"))
-	add("POST /operations/lifecycle/subjects/{requestID}/approve", "approveLifecycleSubjectRequest", "Approve a subject request", "200", nil, path("requestID"))
-	add("POST /operations/lifecycle/subjects/{requestID}/execute", "executeLifecycleSubjectRequest", "Execute a subject request", "200", nil, path("requestID"))
-	add("GET /operations/lifecycle/subjects/{requestID}/download", "downloadLifecycleSubjectExport", "Download an authorized subject export", "200", nil, path("requestID"))
-	add("GET /operations/lifecycle/external-erasures", "listLifecycleExternalErasures", "List external erasure reconciliation state", "200", nil, query("request_id", false, map[string]any{"type": "string", "minLength": 1}))
-	add("POST /operations/lifecycle/external-erasures/{erasureID}/reconcile", "reconcileLifecycleExternalErasure", "Reconcile external erasure evidence", "200", struct {
+	add(lifecyclesdk.ActionLifecycleSubjectRequestsPreview, "previewLifecycleSubjectRequest", "Preview subject request impact", "200", nil, path("requestID"))
+	add(lifecyclesdk.ActionLifecycleSubjectRequestsApprove, "approveLifecycleSubjectRequest", "Approve a subject request", "200", nil, path("requestID"))
+	add(lifecyclesdk.ActionLifecycleSubjectRequestsExecute, "executeLifecycleSubjectRequest", "Execute a subject request", "200", nil, path("requestID"))
+	add(lifecyclesdk.ActionLifecycleSubjectExportsDownload, "downloadLifecycleSubjectExport", "Download an authorized subject export", "200", nil, path("requestID"))
+	add(lifecyclesdk.ActionLifecycleExternalErasuresList, "listLifecycleExternalErasures", "List external erasure reconciliation state", "200", nil, query("request_id", false, map[string]any{"type": "string", "minLength": 1}))
+	add(lifecyclesdk.ActionLifecycleExternalErasuresReconcile, "reconcileLifecycleExternalErasure", "Reconcile external erasure evidence", "200", struct {
 		Evidence string `json:"evidence"`
 	}{}, path("erasureID"))
-	add("POST /operations/lifecycle/deletions/replay", "replayLifecycleDeletions", "Replay registered deletions after restore", "200", nil, query("limit", false, map[string]any{"type": "integer", "minimum": 1}))
+	add(lifecyclesdk.ActionLifecycleDeletionsReplay, "replayLifecycleDeletions", "Replay registered deletions after restore", "200", nil, query("limit", false, map[string]any{"type": "integer", "minimum": 1}))
 	return operations
 }

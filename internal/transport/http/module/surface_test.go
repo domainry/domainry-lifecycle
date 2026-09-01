@@ -43,11 +43,11 @@ func TestLifecycleSurfaceOwnsProductRoutesAndOpenAPI(t *testing.T) {
 		t.Fatalf("OpenAPI operations=%d routes=%d", len(provider.OpenAPIOperations()), len(surface.Routes()))
 	}
 	for _, route := range surface.Routes() {
-		if route.Pattern == "POST /operations/lifecycle/cleanup/jobs/{jobID}/run" {
+		if route.Pattern() == "POST /operations/lifecycle/cleanup/jobs/{jobID}/run" {
 			t.Fatal("Runtime-owned durable cleanup execution leaked into module Surface")
 		}
-		if route.Governance == nil {
-			t.Fatalf("route lacks governance: %s", route.Pattern)
+		if route.Action.AuditClass == "" || route.Action.IdempotencyDecision == "" {
+			t.Fatalf("route lacks governance: %s", route.Pattern())
 		}
 	}
 }

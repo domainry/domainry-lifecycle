@@ -6,12 +6,13 @@ import (
 	"fmt"
 	"time"
 
+	lifecyclesdk "github.com/domainry/domainry-lifecycle-sdk"
 	lifecycleaccess "github.com/domainry/domainry-lifecycle-sdk/access"
 	lifecyclemodel "github.com/domainry/domainry-lifecycle/internal/domain/lifecycle/model"
 )
 
 func (s *LifecycleApplicationService) Metrics(ctx context.Context, principal lifecycleaccess.Principal, now time.Time) (lifecyclemodel.Metrics, error) {
-	if err := lifecycleAuthorize(principal, PermissionPolicyManage); err != nil {
+	if err := lifecycleAuthorize(principal, lifecyclesdk.ActionLifecycleMetricsRead); err != nil {
 		return lifecyclemodel.Metrics{}, err
 	}
 	return s.evidence.Metrics(ctx, principal.WorkspaceID, now)
@@ -29,7 +30,7 @@ func (s *LifecycleApplicationService) HealthForSystem(ctx context.Context, scope
 }
 
 func (s *LifecycleApplicationService) ListArchiveEntries(ctx context.Context, sourceTable string, limit int, principal lifecycleaccess.Principal) ([]lifecyclemodel.ArchiveEntry, error) {
-	if err := lifecycleAuthorize(principal, PermissionPolicyManage); err != nil {
+	if err := lifecycleAuthorize(principal, lifecyclesdk.ActionLifecycleArchiveList); err != nil {
 		return nil, err
 	}
 	entries, err := s.evidence.ListArchiveEntries(ctx, principal.WorkspaceID, sourceTable, limit)
@@ -40,7 +41,7 @@ func (s *LifecycleApplicationService) ListArchiveEntries(ctx context.Context, so
 }
 
 func (s *LifecycleApplicationService) ListExternalErasures(ctx context.Context, requestID string, principal lifecycleaccess.Principal) ([]lifecyclemodel.ExternalErasure, error) {
-	if err := lifecycleAuthorize(principal, PermissionSubjectManage); err != nil {
+	if err := lifecycleAuthorize(principal, lifecyclesdk.ActionLifecycleExternalErasuresList); err != nil {
 		return nil, err
 	}
 	items, err := s.subjectRequests.ListExternalErasures(ctx, principal.WorkspaceID, requestID)
@@ -51,7 +52,7 @@ func (s *LifecycleApplicationService) ListExternalErasures(ctx context.Context, 
 }
 
 func (s *LifecycleApplicationService) ReconcileExternalErasure(ctx context.Context, id, evidence string, principal lifecycleaccess.Principal, now time.Time) (lifecyclemodel.ExternalErasure, error) {
-	if err := lifecycleAuthorize(principal, PermissionSubjectManage); err != nil {
+	if err := lifecycleAuthorize(principal, lifecyclesdk.ActionLifecycleExternalErasuresReconcile); err != nil {
 		return lifecyclemodel.ExternalErasure{}, err
 	}
 	if evidence == "" {
@@ -82,7 +83,7 @@ func sanitizedExternalErasure(item lifecyclemodel.ExternalErasure) lifecyclemode
 }
 
 func (s *LifecycleApplicationService) DownloadSubjectExport(ctx context.Context, workspaceID, requestID string, principal lifecycleaccess.Principal, now time.Time) (json.RawMessage, error) {
-	if err := lifecycleAuthorizeWorkspace(principal, workspaceID, PermissionSubjectManage); err != nil {
+	if err := lifecycleAuthorizeWorkspace(principal, workspaceID, lifecyclesdk.ActionLifecycleSubjectExportsDownload); err != nil {
 		return nil, err
 	}
 	request, err := s.subjectRequest(ctx, workspaceID, requestID)

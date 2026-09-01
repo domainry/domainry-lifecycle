@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	actioncontract "github.com/domainry/domainry-foundation/action"
 	"github.com/domainry/domainry-foundation/modulecapability"
 	"github.com/domainry/domainry-foundation/modulehttp"
 	sdk "github.com/domainry/domainry-lifecycle-sdk"
@@ -124,6 +125,10 @@ func (b *Binding) HTTPSurfaces() []modulehttp.Surface {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return append([]modulehttp.Surface(nil), b.surfaces...)
+}
+
+func (*Binding) AuthorizationActions() ([]actioncontract.ActionDefinition, error) {
+	return lifecycleapplication.AuthorizationActions()
 }
 
 func (b *Binding) Governance() sdk.Governance {
@@ -366,6 +371,7 @@ func adaptError(err error) error {
 
 var _ sdk.Binding = (*Binding)(nil)
 var _ modulehttp.Provider = (*Binding)(nil)
+var _ actioncontract.Provider = (*Binding)(nil)
 var _ sdk.Governance = governanceBinding{}
 var _ sdk.System = systemBinding{}
 var _ sdk.LocalWorkers = workerBinding{}

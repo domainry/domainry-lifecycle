@@ -142,7 +142,10 @@ func TestBindingOwnsApplicationPersistenceAndHostTransaction(t *testing.T) {
 	if err := modulehttp.ValidateSurface(provider.HTTPSurfaces()[0]); err != nil {
 		t.Fatal(err)
 	}
-	principal := lifecycleaccess.Principal{Known: true, WorkspaceID: "workspace-a", UserID: "admin", Permissions: map[string]struct{}{lifecyclesdk.PermissionPolicyManage: {}}}
+	principal := lifecycleaccess.Principal{Known: true, WorkspaceID: "workspace-a", UserID: "admin", Permissions: map[string]struct{}{
+		lifecyclesdk.ActionLifecyclePoliciesPublish: {},
+		lifecyclesdk.ActionLifecyclePoliciesList:    {},
+	}}
 	policy := lifecyclemodel.PolicyVersion{Policy: lifecyclemodel.RetentionPolicy{Key: "records.v1", Version: "1", Owner: "record", Class: lifecyclemodel.RetentionClassProduct, DefaultRetention: 24 * time.Hour, MinimumRetention: time.Hour, WorkspaceMayExtend: true, BackupBehavior: lifecyclemodel.BackupBehaviorStandard, EraseBehavior: lifecyclemodel.EraseBehaviorDelete}, Revision: 1}
 	created, err := binding.Governance().PublishPolicy(t.Context(), policy, principal)
 	if err != nil {
@@ -189,8 +192,15 @@ func TestSubjectExecutionRetryReusesCompletedOwnerSteps(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	requester := lifecycleaccess.Principal{Known: true, WorkspaceID: "workspace-a", UserID: "requester", Permissions: map[string]struct{}{lifecyclesdk.PermissionSubjectManage: {}}}
-	approver := lifecycleaccess.Principal{Known: true, WorkspaceID: "workspace-a", UserID: "approver", Permissions: map[string]struct{}{lifecyclesdk.PermissionSubjectManage: {}}}
+	requester := lifecycleaccess.Principal{Known: true, WorkspaceID: "workspace-a", UserID: "requester", Permissions: map[string]struct{}{
+		lifecyclesdk.ActionLifecycleSubjectRequestsCreate:  {},
+		lifecyclesdk.ActionLifecycleSubjectRequestsVerify:  {},
+		lifecyclesdk.ActionLifecycleSubjectRequestsPreview: {},
+	}}
+	approver := lifecycleaccess.Principal{Known: true, WorkspaceID: "workspace-a", UserID: "approver", Permissions: map[string]struct{}{
+		lifecyclesdk.ActionLifecycleSubjectRequestsApprove: {},
+		lifecyclesdk.ActionLifecycleSubjectRequestsExecute: {},
+	}}
 	governance := binding.Governance()
 	request, err := governance.CreateSubjectRequest(t.Context(), lifecyclemodel.SubjectRequest{
 		WorkspaceID: "workspace-a", Kind: lifecyclemodel.SubjectRequestExport,

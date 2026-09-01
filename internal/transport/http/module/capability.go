@@ -2,22 +2,39 @@ package modulehttptransport
 
 import (
 	"encoding/json"
-	"strings"
+	"fmt"
 
 	"github.com/domainry/domainry-foundation/modulecapability"
 	"github.com/domainry/domainry-foundation/modulehttp"
+	lifecyclesdk "github.com/domainry/domainry-lifecycle-sdk"
 )
 
 const (
-	lifecycleGovernanceCategory = "lifecycle.governance"
-	lifecycleSubjectsCategory   = "lifecycle.subjects"
+	lifecycleGovernanceCategory = lifecyclesdk.CapabilityLifecycleGovernance
+	lifecycleSubjectsCategory   = lifecyclesdk.CapabilityLifecycleSubjects
 )
 
 func NewCapabilityBinding() (*modulecapability.StaticBinding, error) {
-	routes := lifecycleRoutes()
+	routes, err := lifecycleRoutes()
+	if err != nil {
+		return nil, err
+	}
 	groups := map[string][]modulehttp.Route{}
 	for _, route := range routes {
-		groups[lifecycleCapabilityCategory(route.Pattern)] = append(groups[lifecycleCapabilityCategory(route.Pattern)], route)
+		groups[route.Action.CapabilityKey] = append(groups[route.Action.CapabilityKey], route)
+	}
+	byAction := lifecycleOpenAPIOperationsByAction()
+	operations := make(map[string]map[string]any, len(routes))
+	for _, route := range routes {
+		operation, found := byAction[route.Action.Key]
+		if !found {
+			return nil, fmt.Errorf("Lifecycle Action %q has no OpenAPI operation", route.Action.Key)
+		}
+		operations[route.Pattern()] = operation
+		delete(byAction, route.Action.Key)
+	}
+	if len(byAction) != 0 {
+		return nil, fmt.Errorf("Lifecycle OpenAPI operations have no Action manifest entries")
 	}
 	definitions := []struct {
 		key, name, description string
@@ -40,7 +57,7 @@ func NewCapabilityBinding() (*modulecapability.StaticBinding, error) {
 		document, err := modulecapability.CategoryFromHTTPRoutes(modulecapability.HTTPRouteCategory{
 			Owner:    "lifecycle",
 			Category: modulecapability.CategorySummary{Key: definition.key, Name: definition.name, Description: definition.description, AssemblyChains: definition.assembly, ValidationScopes: definition.validation},
-			Routes:   groups[definition.key], Operations: lifecycleOpenAPIOperations(),
+			Routes:   groups[definition.key], Operations: operations,
 			Components: map[string]map[string]json.RawMessage{
 				"securitySchemes": {"BearerAuth": json.RawMessage(`{"type":"http","scheme":"bearer","bearerFormat":"JWT"}`)},
 			},
@@ -69,11 +86,4 @@ func NewCapabilityBinding() (*modulecapability.StaticBinding, error) {
 		},
 	}
 	return modulecapability.NewStaticBinding(summary, documents, nil)
-}
-
-func lifecycleCapabilityCategory(pattern string) string {
-	if strings.Contains(pattern, "/subjects") || strings.Contains(pattern, "/external-erasures") || strings.Contains(pattern, "/deletions/replay") {
-		return lifecycleSubjectsCategory
-	}
-	return lifecycleGovernanceCategory
 }
