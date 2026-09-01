@@ -59,7 +59,13 @@ func TestLifecycleSurfaceIgnoresServerOwnedPolicyFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(http.MethodPost, "/operations/lifecycle/policies", strings.NewReader(`{"policy":{"key":"records","version":"1","owner":"record"},"revision":2}`))
-	request = request.WithContext(identitysdk.WithRequestIdentity(request.Context(), identitysdk.RequestIdentity{Principal: identitysdk.Principal{Known: true, WorkspaceID: "workspace-a", UserID: "operator-a"}}))
+	request = request.WithContext(identitysdk.WithRequestIdentity(request.Context(), identitysdk.RequestIdentity{Principal: identitysdk.Principal{
+		Known: true, WorkspaceID: "workspace-a", UserID: "operator-a",
+		AccessBundle: &identitysdk.AccessBundle{FunctionGrants: []identitysdk.FunctionGrant{
+			{Resource: identitysdk.ResourceType("lifecycle.policies"), Action: identitysdk.Action("publish"), Effect: identitysdk.EffectAllow},
+			{Resource: identitysdk.ResourceType("lifecycle.policies"), Action: identitysdk.Action("list"), Effect: identitysdk.EffectAllow},
+		}},
+	}}))
 	response := httptest.NewRecorder()
 	surface.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusCreated {
@@ -67,6 +73,9 @@ func TestLifecycleSurfaceIgnoresServerOwnedPolicyFields(t *testing.T) {
 	}
 	if governance.policy.WorkspaceID != "" || governance.policy.Status != "" || !governance.policy.PublishedAt.IsZero() || governance.principal.WorkspaceID != "workspace-a" {
 		t.Fatalf("policy=%#v principal=%#v", governance.policy, governance.principal)
+	}
+	if !governance.principal.HasPermission(lifecyclesdk.ActionLifecyclePoliciesPublish) || governance.principal.HasPermission(lifecyclesdk.ActionLifecyclePoliciesList) {
+		t.Fatalf("HTTP boundary did not narrow authority to the current Action: %#v", governance.principal.Permissions)
 	}
 	var result lifecyclemodel.PolicyVersion
 	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || result.WorkspaceID != "workspace-a" || result.PublishedBy != "operator-a" {

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	actioncontract "github.com/domainry/domainry-foundation/action"
 	"github.com/domainry/domainry-foundation/modulehttp"
 	lifecyclesdk "github.com/domainry/domainry-lifecycle-sdk"
 	lifecycleaccess "github.com/domainry/domainry-lifecycle-sdk/access"
@@ -141,6 +142,14 @@ func TestBindingOwnsApplicationPersistenceAndHostTransaction(t *testing.T) {
 	}
 	if err := modulehttp.ValidateSurface(provider.HTTPSurfaces()[0]); err != nil {
 		t.Fatal(err)
+	}
+	actionProvider, ok := binding.(actioncontract.Provider)
+	if !ok {
+		t.Fatal("Lifecycle binding does not expose its complete Action manifest")
+	}
+	actions, err := actionProvider.AuthorizationActions()
+	if err != nil || len(actions) != 21 {
+		t.Fatalf("Lifecycle Actions=%d err=%v", len(actions), err)
 	}
 	principal := lifecycleaccess.Principal{Known: true, WorkspaceID: "workspace-a", UserID: "admin", Permissions: map[string]struct{}{
 		lifecyclesdk.ActionLifecyclePoliciesPublish: {},

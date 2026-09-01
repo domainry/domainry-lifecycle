@@ -66,6 +66,9 @@ func TestPolicyUseCaseOwnsServerFieldsAuthorizationAndAudit(t *testing.T) {
 	if created.WorkspaceID != "workspace-a" || created.PublishedBy != "admin" || created.Status != lifecyclemodel.PolicyStatusPublished || created.Revision != 1 || created.PublishedAt.IsZero() || len(evidence.values) != 1 {
 		t.Fatalf("created=%#v evidence=%#v", created, evidence.values)
 	}
+	if _, err := service.ListPolicies(t.Context(), principal); err == nil {
+		t.Fatal("publish Action grant also authorized the distinct list Action")
+	}
 	if _, err := service.ListPolicies(t.Context(), lifecycleaccess.Principal{Known: true, WorkspaceID: "workspace-a"}); err == nil {
 		t.Fatal("permission-less principal was authorized")
 	}
