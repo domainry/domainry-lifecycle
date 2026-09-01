@@ -8,6 +8,7 @@ import (
 
 	lifecyclesdk "github.com/domainry/domainry-lifecycle-sdk"
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
+	lifecyclecapability "github.com/domainry/domainry-lifecycle/capability"
 	lifecyclesdkadapter "github.com/domainry/domainry-lifecycle/internal/adapter/lifecyclesdk"
 	persistence "github.com/domainry/domainry-lifecycle/internal/infrastructure/persistence"
 )
@@ -30,7 +31,11 @@ func (*Factory) OpenModule(ctx context.Context, application lifecyclesdk.Applica
 	if err := persistence.ApplySchema(ctx, host); err != nil {
 		return nil, err
 	}
-	return lifecyclesdkadapter.NewBinding(host), nil
+	capability, err := lifecyclecapability.Open(lifecyclecapability.Inputs{})
+	if err != nil {
+		return nil, fmt.Errorf("build Lifecycle capability disclosure: %w", err)
+	}
+	return lifecyclesdkadapter.NewBinding(host, capability)
 }
 
 var _ lifecyclesdk.Factory = (*Factory)(nil)

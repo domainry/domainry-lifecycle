@@ -6,10 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/domainry/domainry-foundation/modulecapability"
 	"github.com/domainry/domainry-foundation/modulehttp"
 	sdk "github.com/domainry/domainry-lifecycle-sdk"
 	"github.com/domainry/domainry-lifecycle-sdk/access"
@@ -29,11 +31,25 @@ type Binding struct {
 	service    *lifecycleapplication.LifecycleApplicationService
 	workers    *lifecycleapplication.WorkerRunner
 	surfaces   []modulehttp.Surface
+	capability modulecapability.Binding
 	bound      bool
 }
 
-func NewBinding(host modulehost.Host) *Binding {
-	return &Binding{repository: infra.NewLifecycleStore(host), host: host}
+func NewBinding(host modulehost.Host, capability modulecapability.Binding) (*Binding, error) {
+	if capability == nil {
+		return nil, fmt.Errorf("Lifecycle capability binding is required")
+	}
+	return &Binding{repository: infra.NewLifecycleStore(host), host: host, capability: capability}, nil
+}
+
+func (b *Binding) CapabilitySummary(ctx context.Context) (modulecapability.ModuleSummary, error) {
+	return b.capability.CapabilitySummary(ctx)
+}
+func (b *Binding) CapabilityCategory(ctx context.Context, key string) (modulecapability.CategoryDocument, error) {
+	return b.capability.CapabilityCategory(ctx, key)
+}
+func (b *Binding) ValidateCapabilityCandidate(ctx context.Context, request modulecapability.ValidationRequest) (modulecapability.ValidationResult, error) {
+	return b.capability.ValidateCapabilityCandidate(ctx, request)
 }
 
 func (*Binding) Descriptor() sdk.Descriptor {

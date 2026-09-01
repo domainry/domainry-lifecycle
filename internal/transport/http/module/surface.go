@@ -39,7 +39,12 @@ func NewSurface(governance lifecyclesdk.Governance) (modulehttp.Surface, error) 
 	}
 	handler := &lifecycleHTTPHandler{governance: governance, mux: http.NewServeMux()}
 	handler.register()
-	routes := []modulehttp.Route{
+	routes := lifecycleRoutes()
+	return &lifecycleHTTPSurface{handler: handler.mux, routes: routes}, nil
+}
+
+func lifecycleRoutes() []modulehttp.Route {
+	return []modulehttp.Route{
 		readRoute("GET /operations/lifecycle/policies", lifecyclesdk.PermissionPolicyManage),
 		writeRoute("POST /operations/lifecycle/policies", lifecyclesdk.PermissionPolicyManage, modulehttp.HighRiskReasonRequired),
 		writeRoute("POST /operations/lifecycle/legal-holds", lifecyclesdk.PermissionPolicyManage, modulehttp.HighRiskReasonRequired),
@@ -58,7 +63,6 @@ func NewSurface(governance lifecyclesdk.Governance) (modulehttp.Surface, error) 
 		writeRoute("POST /operations/lifecycle/external-erasures/{erasureID}/reconcile", lifecyclesdk.PermissionSubjectManage, modulehttp.HighRiskConfirmationRequired),
 		writeRoute("POST /operations/lifecycle/deletions/replay", lifecyclesdk.PermissionSubjectManage, modulehttp.HighRiskConfirmationRequired),
 	}
-	return &lifecycleHTTPSurface{handler: handler.mux, routes: routes}, nil
 }
 
 func readRoute(pattern, permission string) modulehttp.Route {
