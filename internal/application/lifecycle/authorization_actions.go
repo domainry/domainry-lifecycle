@@ -59,7 +59,7 @@ func lifecycleRoleAction(key, capabilityKey, capabilityLabel, pattern, label str
 		HTTP:          &actioncontract.HTTPBinding{Method: method, RouteTemplate: path},
 		NonHTTP:       []actioncontract.NonHTTPBinding{{Kind: "sdk", InvocationKey: key}},
 		Permission: &actioncontract.PermissionDefinition{
-			Key: key, Owner: LifecycleAuthorizationOwner, ResourceKey: key[:separator], ActionKey: key[separator+1:], Label: label,
+			Key: key, Owner: LifecycleAuthorizationOwner, ResourceKey: key[:separator], OperationKey: key[separator+1:], Label: label,
 			Category: capabilityLabel, LifecycleStatus: actioncontract.LifecycleActive,
 		},
 		EffectClass: effect, RiskLevel: risk, ApprovalPolicies: append([]actioncontract.ApprovalPolicy(nil), approvals...),

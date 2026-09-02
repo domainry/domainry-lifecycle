@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	actioncontract "github.com/domainry/domainry-foundation/action"
+	lifecyclesdk "github.com/domainry/domainry-lifecycle-sdk"
+	lifecycleaccess "github.com/domainry/domainry-lifecycle-sdk/access"
 )
 
 func TestAuthorizationActionsFreezeAsOneExactManifest(t *testing.T) {
@@ -42,11 +44,28 @@ func TestAuthorizationActionsFreezeAsOneExactManifest(t *testing.T) {
 		}
 		httpActions++
 		permission := definition.Permission
-		if definition.HTTP == nil || definition.Authorization.Strategy != actioncontract.AuthorizationExactRolePermission || permission.Key != definition.Key || permission.Key != permission.ResourceKey+"."+permission.ActionKey || strings.Contains(permission.Key, "*") {
+		if definition.HTTP == nil || definition.Authorization.Strategy != actioncontract.AuthorizationExactRolePermission || permission.Key != definition.Key || permission.Key != permission.ResourceKey+"."+permission.OperationKey || strings.Contains(permission.Key, "*") {
 			t.Fatalf("role Action is not exact: Action=%#v Permission=%#v", definition, permission)
 		}
 	}
 	if httpActions != 17 {
 		t.Fatalf("HTTP role Action count=%d", httpActions)
+	}
+}
+
+func TestOperationsActionsRequireSystemScopeInsteadOfRolePermission(t *testing.T) {
+	rolePrincipal := lifecycleaccess.Principal{
+		Known: true, WorkspaceID: "workspace-a", UserID: "operator-a",
+		Permissions: map[string]struct{}{lifecyclesdk.ActionLifecycleCleanupJobsProcess: {}},
+	}
+	if err := lifecycleAuthorizeSystem(rolePrincipal); err == nil {
+		t.Fatal("role Permission authorized a system-only Lifecycle Action")
+	}
+	systemPrincipal := lifecycleaccess.NewSystemPrincipal(
+		"lifecycle-worker",
+		lifecycleaccess.NewSystemScope(lifecycleaccess.SystemScopeGlobal, "process cleanup jobs"),
+	)
+	if err := lifecycleAuthorizeSystem(systemPrincipal); err != nil {
+		t.Fatalf("valid system scope was denied: %v", err)
 	}
 }
