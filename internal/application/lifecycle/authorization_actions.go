@@ -55,7 +55,7 @@ func lifecycleRoleAction(key, capabilityKey, capabilityLabel, pattern, label str
 		Key: key, Owner: LifecycleAuthorizationOwner, SourceKind: "module_surface", CapabilityKey: capabilityKey, CapabilityLabel: capabilityLabel,
 		OperationKey: key[separator+1:], OperationLabel: label, Label: label,
 		Exposures:     []actioncontract.Exposure{actioncontract.ExposureTenantAdmin, actioncontract.ExposureOps},
-		Authorization: actioncontract.Authorization{Strategy: actioncontract.AuthorizationExactRolePermission},
+		Authorization: actioncontract.Authorization{Strategy: actioncontract.AuthorizationAuthenticated},
 		HTTP:          &actioncontract.HTTPBinding{Method: method, RouteTemplate: path},
 		NonHTTP:       []actioncontract.NonHTTPBinding{{Kind: "sdk", InvocationKey: key}},
 		Permission: &actioncontract.PermissionDefinition{
@@ -77,7 +77,7 @@ func lifecycleOperationsAction(key, operationKey, label string, effect actioncon
 		CapabilityKey: lifecyclesdk.CapabilityLifecycleOperations, CapabilityLabel: "Lifecycle operations",
 		OperationKey: operationKey, OperationLabel: label, Label: label,
 		Exposures:     []actioncontract.Exposure{actioncontract.ExposureOps},
-		Authorization: actioncontract.Authorization{Strategy: actioncontract.AuthorizationOperationsIdentity, PolicyKey: "lifecycle.system_scope"},
+		Authorization: actioncontract.Authorization{Strategy: actioncontract.AuthorizationSigned, PolicyKey: "lifecycle.system_scope"},
 		NonHTTP:       []actioncontract.NonHTTPBinding{{Kind: "sdk", InvocationKey: key}},
 		EffectClass:   effect, RiskLevel: risk, IdempotencyDecision: idempotency,
 		AuditClass: "lifecycle_system_operation", LifecycleStatus: actioncontract.LifecycleActive,

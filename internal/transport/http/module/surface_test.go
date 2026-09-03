@@ -61,10 +61,17 @@ func TestLifecycleSurfaceIgnoresServerOwnedPolicyFields(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/operations/lifecycle/policies", strings.NewReader(`{"policy":{"key":"records","version":"1","owner":"record"},"revision":2}`))
 	request = request.WithContext(identitysdk.WithRequestIdentity(request.Context(), identitysdk.RequestIdentity{Principal: identitysdk.Principal{
 		Known: true, WorkspaceID: "workspace-a", UserID: "operator-a",
-		AccessBundle: &identitysdk.AccessBundle{FunctionGrants: []identitysdk.FunctionGrant{
-			{Resource: identitysdk.ResourceType("lifecycle.policies"), Action: identitysdk.Action("publish"), Effect: identitysdk.EffectAllow},
-			{Resource: identitysdk.ResourceType("lifecycle.policies"), Action: identitysdk.Action("list"), Effect: identitysdk.EffectAllow},
-		}},
+		AccessBundle: &identitysdk.AccessBundle{
+			Subject: identitysdk.Subject{WorkspaceID: "workspace-a", SubjectID: "operator-a"},
+			FunctionGrants: []identitysdk.FunctionGrant{
+				{Resource: identitysdk.ResourceType("lifecycle.policies"), Action: identitysdk.Action("publish"), Effect: identitysdk.EffectAllow},
+				{Resource: identitysdk.ResourceType("lifecycle.policies"), Action: identitysdk.Action("list"), Effect: identitysdk.EffectAllow},
+			},
+			DataPolicies: []identitysdk.DataPolicy{
+				{Key: "publish", Resource: identitysdk.ResourceType("lifecycle.policies"), Action: identitysdk.Action("publish"), Effect: identitysdk.EffectAllow, DataScopes: []identitysdk.DataScope{identitysdk.DataScopeOwner}},
+				{Key: "list", Resource: identitysdk.ResourceType("lifecycle.policies"), Action: identitysdk.Action("list"), Effect: identitysdk.EffectAllow, DataScopes: []identitysdk.DataScope{identitysdk.DataScopeAll}},
+			},
+		},
 	}}))
 	response := httptest.NewRecorder()
 	surface.Handler().ServeHTTP(response, request)

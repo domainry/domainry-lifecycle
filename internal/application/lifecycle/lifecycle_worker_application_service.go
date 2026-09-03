@@ -29,31 +29,43 @@ func (s *LifecycleApplicationService) ProcessRunnableCleanupJobs(ctx context.Con
 // ReplayRegisteredDeletions is a restore gate: a restored workspace must run
 // its durable deletion registry before it can be exposed for normal traffic.
 func (s *LifecycleApplicationService) ReplayRegisteredDeletions(ctx context.Context, workspaceID string, limit int, principal lifecycleaccess.Principal) (int, error) {
-	if err := lifecycleAuthorizeWorkspaceOrSystem(principal, workspaceID, lifecyclesdk.ActionLifecycleDeletionsReplay); err != nil {
-		return 0, err
-	}
-	registrations, err := s.subjectRequests.ListPendingDeletionRegistrations(ctx, workspaceID, limit)
+	filter, err := lifecycleWorkspaceOrSystemDataScope(ctx, principal, workspaceID, lifecyclesdk.ActionLifecycleDeletionsReplay)
 	if err != nil {
 		return 0, err
 	}
 	replayed := 0
-	for _, registration := range registrations {
-		holds, holdErr := s.legalHolds.ActiveLegalHolds(ctx, lifecyclemodel.ResourceTarget{WorkspaceID: workspaceID, ResourceType: "data_subject", ResourceID: registration.ResolvedIdentity}, time.Now().UTC())
-		if holdErr != nil {
-			return replayed, holdErr
+	err = s.withinTransaction(ctx, func(transactionContext context.Context) error {
+		registrations, err := s.subjectRequests.ListPendingDeletionRegistrations(transactionContext, workspaceID, limit, filter)
+		if err != nil {
+			return err
 		}
-		if len(holds) > 0 {
-			return replayed, fmt.Errorf("backup deletion replay blocked by legal hold")
-		}
-		for _, handler := range s.subjectHandlers {
-			if _, err := handler.EraseSubjectForRequest(ctx, registration.RequestID, workspaceID, registration.ResolvedIdentity, nil); err != nil {
-				return replayed, err
+		// Validate the complete candidate set before the first owner side effect.
+		// Embedded owner handlers receive the same host transaction context and
+		// the durable request ID remains their retry/idempotency identity.
+		for _, registration := range registrations {
+			holds, holdErr := s.legalHolds.ActiveLegalHolds(transactionContext, lifecyclemodel.ResourceTarget{WorkspaceID: workspaceID, ResourceType: "data_subject", ResourceID: registration.ResolvedIdentity}, time.Now().UTC())
+			if holdErr != nil {
+				return holdErr
+			}
+			if len(holds) > 0 {
+				return fmt.Errorf("backup deletion replay blocked by legal hold")
 			}
 		}
-		replayed++
-		if err := s.audit(ctx, workspaceID, "lifecycle.deletion.replayed", principal.UserID, registration.RequestID, "", registration); err != nil {
-			return replayed, err
+		for _, registration := range registrations {
+			for _, handler := range s.subjectHandlers {
+				if _, err := handler.EraseSubjectForRequest(transactionContext, registration.RequestID, workspaceID, registration.ResolvedIdentity, nil); err != nil {
+					return err
+				}
+			}
+			if err := s.audit(transactionContext, workspaceID, "lifecycle.deletion.replayed", principal.UserID, registration.RequestID, "", registration); err != nil {
+				return err
+			}
+			replayed++
 		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
 	}
 	return replayed, nil
 }

@@ -34,7 +34,58 @@ func Migrations(renderer modulehost.Dialect) ([]modulehost.SchemaMigration, erro
 	if err != nil {
 		return nil, err
 	}
-	return []modulehost.SchemaMigration{foundation, executionSteps}, nil
+	dataScope, err := buildDataScopeMigration(renderer)
+	if err != nil {
+		return nil, err
+	}
+	return []modulehost.SchemaMigration{foundation, executionSteps, dataScope}, nil
+}
+
+func buildDataScopeMigration(renderer modulehost.Dialect) (modulehost.SchemaMigration, error) {
+	columns := []struct {
+		table, name string
+	}{
+		{"_lifecycle_policy_versions", "published_by"},
+		{"_lifecycle_policy_versions", "owner_org_id"},
+		{"_lifecycle_legal_holds", "created_by"},
+		{"_lifecycle_legal_holds", "owner_org_id"},
+		{"_lifecycle_cleanup_jobs", "requested_by"},
+		{"_lifecycle_cleanup_jobs", "owner_org_id"},
+		{"_lifecycle_subject_requests", "requested_by"},
+		{"_lifecycle_subject_requests", "owner_org_id"},
+	}
+	statements := make([]string, 0, len(columns)*2)
+	for _, definition := range columns {
+		statement, args, err := ormschema.NewAddColumn(renderer, definition.table, optionalKey(definition.name)).Build()
+		if err != nil {
+			return modulehost.SchemaMigration{}, fmt.Errorf("build lifecycle data-scope column %s.%s: %w", definition.table, definition.name, err)
+		}
+		if len(args) != 0 {
+			return modulehost.SchemaMigration{}, fmt.Errorf("lifecycle data-scope column %s.%s produced DDL arguments", definition.table, definition.name)
+		}
+		statements = append(statements, statement)
+	}
+	indexes := []index{
+		{"_lifecycle_policy_versions", "idx_lifecycle_policy_publisher", false, []string{"workspace_id", "published_by"}},
+		{"_lifecycle_policy_versions", "idx_lifecycle_policy_owner_org", false, []string{"workspace_id", "owner_org_id"}},
+		{"_lifecycle_legal_holds", "idx_lifecycle_hold_creator", false, []string{"workspace_id", "created_by"}},
+		{"_lifecycle_legal_holds", "idx_lifecycle_hold_owner_org", false, []string{"workspace_id", "owner_org_id"}},
+		{"_lifecycle_cleanup_jobs", "idx_lifecycle_cleanup_requester", false, []string{"workspace_id", "requested_by"}},
+		{"_lifecycle_cleanup_jobs", "idx_lifecycle_cleanup_owner_org", false, []string{"workspace_id", "owner_org_id"}},
+		{"_lifecycle_subject_requests", "idx_lifecycle_subject_requester", false, []string{"workspace_id", "requested_by"}},
+		{"_lifecycle_subject_requests", "idx_lifecycle_subject_owner_org", false, []string{"workspace_id", "owner_org_id"}},
+	}
+	for _, definition := range indexes {
+		statement, args, err := ormschema.NewIndex(renderer, definition.name, definition.table).Columns(definition.columns...).Build()
+		if err != nil {
+			return modulehost.SchemaMigration{}, fmt.Errorf("build lifecycle data-scope index %s: %w", definition.name, err)
+		}
+		if len(args) != 0 {
+			return modulehost.SchemaMigration{}, fmt.Errorf("lifecycle data-scope index %s produced DDL arguments", definition.name)
+		}
+		statements = append(statements, statement)
+	}
+	return modulehost.SchemaMigration{Version: 3, Name: "business_resource_data_scope", Statements: statements}, nil
 }
 
 func buildMigration(renderer modulehost.Dialect, version uint, name string, tableDefinitions []table, indexDefinitions []index) (modulehost.SchemaMigration, error) {

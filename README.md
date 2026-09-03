@@ -27,6 +27,17 @@ preview, metrics, archive evidence, subject requests, external-erasure
 reconciliation, and deletion replay. Lifecycle owns their request DTOs,
 redaction, permissions, governance metadata, and OpenAPI operations.
 
+Every role-facing route rechecks its exact Action permission and compiles that
+same grant's Identity-owned `data_scope` (`all`, `owner`, `org`, `org_child`, or
+`target_org`) into explicit repository predicates. Workspace and scope filters
+are applied by `domainry-orm` while querying; scoped mutations pre-read and
+write under the same host transaction and repeat the filter in the final DML.
+`all` adds no data-range predicate. Lifecycle stores only natural business
+ownership facts on policy versions, legal holds, cleanup jobs, and subject
+requests; archive, external-erasure, and deletion-registry access follows their
+job/request relationship. Worker leases, fencing tokens, execution steps,
+artifact cleanup, and other internal maintenance state remain system-scoped.
+
 The host still owns authentication/listener mounting and common transport
 governance. A Runtime host may additionally own orchestration endpoints that
 span Runtime infrastructure. In domainry-runtime, only

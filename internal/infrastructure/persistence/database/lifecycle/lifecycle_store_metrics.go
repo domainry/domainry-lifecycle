@@ -7,12 +7,13 @@ import (
 	"time"
 
 	lifecyclemodel "github.com/domainry/domainry-lifecycle/internal/domain/lifecycle/model"
+	lifecyclepersistence "github.com/domainry/domainry-lifecycle/internal/domain/lifecycle/repository"
 	"github.com/domainry/domainry-orm/query"
 )
 
-func (s LifecycleStore) Metrics(ctx context.Context, workspaceID string, now time.Time) (lifecyclemodel.Metrics, error) {
+func (s LifecycleStore) Metrics(ctx context.Context, workspaceID string, now time.Time, filter lifecyclepersistence.DataScopeFilter) (lifecyclemodel.Metrics, error) {
 	metrics := lifecyclemodel.Metrics{}
-	queryValue, args, buildErr := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_cleanup_jobs", workspaceID).Projections(query.Project(query.CountAll()), query.Project(query.Min(query.Column("updated_at")))).Where(query.In("status", lifecyclemodel.CleanupStatusPending, lifecyclemodel.CleanupStatusPaused, lifecyclemodel.CleanupStatusFailed)).Build()
+	queryValue, args, buildErr := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_cleanup_jobs", workspaceID).Projections(query.Project(query.CountAll()), query.Project(query.Min(query.Column("updated_at")))).Where(andPredicates(query.In("status", lifecyclemodel.CleanupStatusPending, lifecyclemodel.CleanupStatusPaused, lifecyclemodel.CleanupStatusFailed), dataScopePredicate(filter, "requested_by", "owner_org_id"))).Build()
 	if buildErr != nil {
 		return metrics, buildErr
 	}
@@ -23,14 +24,14 @@ func (s LifecycleStore) Metrics(ctx context.Context, workspaceID string, now tim
 	if oldest.Valid {
 		metrics.OldestEligible, _ = time.Parse(time.RFC3339Nano, oldest.String)
 	}
-	queryValue, args, buildErr = query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_legal_holds", workspaceID).Projections(query.Project(query.CountAll())).Where(query.And(query.LessThanOrEqual("starts_at", lifecycleTime(now)), query.Or(query.Equal("ends_at", ""), query.GreaterThan("ends_at", lifecycleTime(now))))).Build()
+	queryValue, args, buildErr = query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_legal_holds", workspaceID).Projections(query.Project(query.CountAll())).Where(andPredicates(query.LessThanOrEqual("starts_at", lifecycleTime(now)), query.Or(query.Equal("ends_at", ""), query.GreaterThan("ends_at", lifecycleTime(now))), dataScopePredicate(filter, "created_by", "owner_org_id"))).Build()
 	if buildErr != nil {
 		return metrics, buildErr
 	}
 	if err := s.database(ctx).QueryRowContext(ctx, queryValue, args...).Scan(&metrics.LegalHoldCount); err != nil {
 		return metrics, err
 	}
-	queryValue, args, buildErr = query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_audit_evidence", workspaceID).Columns("event", "payload_json").Where(query.In("event", "lifecycle.cleanup.succeeded", "lifecycle.cleanup.failed")).Build()
+	queryValue, args, buildErr = query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_audit_evidence", workspaceID).Columns("event", "payload_json").Where(andPredicates(query.In("event", "lifecycle.cleanup.succeeded", "lifecycle.cleanup.failed"), s.cleanupJobReferenceScopePredicate("resource_id", workspaceID, filter))).Build()
 	if buildErr != nil {
 		return metrics, buildErr
 	}

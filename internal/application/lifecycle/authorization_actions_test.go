@@ -37,14 +37,14 @@ func TestAuthorizationActionsFreezeAsOneExactManifest(t *testing.T) {
 			t.Fatalf("Action %q SDK binding=%#v", definition.Key, definition.NonHTTP)
 		}
 		if definition.Permission == nil {
-			if definition.HTTP != nil || definition.Authorization.Strategy != actioncontract.AuthorizationOperationsIdentity {
+			if definition.HTTP != nil || definition.Authorization.Strategy != actioncontract.AuthorizationSigned {
 				t.Fatalf("system Action is not operations-only: %#v", definition)
 			}
 			continue
 		}
 		httpActions++
 		permission := definition.Permission
-		if definition.HTTP == nil || definition.Authorization.Strategy != actioncontract.AuthorizationExactRolePermission || permission.Key != definition.Key || permission.Key != permission.ResourceKey+"."+permission.OperationKey || strings.Contains(permission.Key, "*") {
+		if definition.HTTP == nil || definition.Authorization.Strategy != actioncontract.AuthorizationAuthenticated || permission.Key != definition.Key || permission.Key != permission.ResourceKey+"."+permission.OperationKey || strings.Contains(permission.Key, "*") {
 			t.Fatalf("role Action is not exact: Action=%#v Permission=%#v", definition, permission)
 		}
 	}

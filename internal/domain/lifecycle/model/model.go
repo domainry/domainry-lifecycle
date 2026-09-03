@@ -32,6 +32,8 @@ type LegalHold struct {
 	EndsAt        *time.Time `json:"ends_at,omitempty"`
 	ReviewAt      time.Time  `json:"review_at"`
 	AuditEvidence string     `json:"audit_evidence"`
+	CreatedBy     string     `json:"created_by"`
+	OwnerOrgID    string     `json:"owner_org_id,omitempty"`
 }
 
 type EligibilityInput struct {
@@ -65,6 +67,7 @@ type PolicyVersion struct {
 	Status         PolicyStatus    `json:"status"`
 	Revision       int64           `json:"revision"`
 	PublishedBy    string          `json:"published_by"`
+	OwnerOrgID     string          `json:"owner_org_id,omitempty"`
 	PublishedAt    time.Time       `json:"published_at"`
 	ApprovalRef    string          `json:"approval_ref,omitempty"`
 	EstimatedRows  int64           `json:"estimated_rows"`
@@ -104,6 +107,7 @@ type CleanupJob struct {
 	OldestEligible time.Time     `json:"oldest_eligible,omitempty"`
 	LastError      string        `json:"last_error,omitempty"`
 	RequestedBy    string        `json:"requested_by"`
+	OwnerOrgID     string        `json:"owner_org_id,omitempty"`
 	Reason         string        `json:"reason"`
 	CreatedAt      time.Time     `json:"created_at"`
 	UpdatedAt      time.Time     `json:"updated_at"`
@@ -148,6 +152,7 @@ type SubjectRequest struct {
 	SubjectID         string               `json:"subject_id"`
 	ResolvedIdentity  string               `json:"resolved_identity,omitempty"`
 	RequestedBy       string               `json:"requested_by"`
+	OwnerOrgID        string               `json:"owner_org_id,omitempty"`
 	VerifiedBy        string               `json:"verified_by,omitempty"`
 	ApprovedBy        string               `json:"approved_by,omitempty"`
 	SecondFactorRef   string               `json:"second_factor_ref,omitempty"`

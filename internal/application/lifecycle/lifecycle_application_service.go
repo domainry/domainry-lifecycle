@@ -59,13 +59,15 @@ func NewLifecycleApplicationService(ctx context.Context, deps LifecycleApplicati
 }
 
 func (s *LifecycleApplicationService) PublishPolicy(ctx context.Context, version lifecyclemodel.PolicyVersion, principal lifecycleaccess.Principal) (lifecyclemodel.PolicyVersion, error) {
-	if err := lifecycleAuthorize(principal, lifecyclesdk.ActionLifecyclePoliciesPublish); err != nil {
+	filter, err := lifecycleCreationDataScope(ctx, principal, principal.WorkspaceID, lifecyclesdk.ActionLifecyclePoliciesPublish)
+	if err != nil {
 		return lifecyclemodel.PolicyVersion{}, err
 	}
 	if s == nil || s.policies == nil {
 		return lifecyclemodel.PolicyVersion{}, fmt.Errorf("lifecycle repository unavailable")
 	}
 	version.PublishedBy = principal.UserID
+	version.OwnerOrgID = filter.SubjectOrgID
 	version.WorkspaceID = principal.WorkspaceID
 	if version.Status == "" {
 		version.Status = lifecyclemodel.PolicyStatusPublished
@@ -73,26 +75,33 @@ func (s *LifecycleApplicationService) PublishPolicy(ctx context.Context, version
 	if version.PublishedAt.IsZero() {
 		version.PublishedAt = time.Now().UTC()
 	}
-	previous, found, err := s.policies.LatestPolicy(ctx, principal.WorkspaceID, version.Policy.Key)
-	if err != nil {
-		return lifecyclemodel.PolicyVersion{}, err
-	}
-	if found {
-		if version.Revision <= 0 {
-			version.Revision = previous.Revision + 1
-		}
-		if err := lifecyclepolicy.ValidatePolicyPublication(&previous, version); err != nil {
-			return lifecyclemodel.PolicyVersion{}, err
-		}
-	} else {
-		if version.Revision <= 0 {
-			version.Revision = 1
-		}
-		if err := lifecyclepolicy.ValidatePolicyPublication(nil, version); err != nil {
-			return lifecyclemodel.PolicyVersion{}, err
-		}
-	}
 	err = s.withinTransaction(ctx, func(transactionContext context.Context) error {
+		_, anyFound, err := s.policies.LatestPolicy(transactionContext, principal.WorkspaceID, version.Policy.Key, lifecyclepersistence.UnrestrictedDataScopeFilter())
+		if err != nil {
+			return err
+		}
+		previous, found, err := s.policies.LatestPolicy(transactionContext, principal.WorkspaceID, version.Policy.Key, filter)
+		if err != nil {
+			return err
+		}
+		if anyFound && !found {
+			return fmt.Errorf("auth.permission_denied")
+		}
+		if found {
+			if version.Revision <= 0 {
+				version.Revision = previous.Revision + 1
+			}
+			if err := lifecyclepolicy.ValidatePolicyPublication(&previous, version); err != nil {
+				return err
+			}
+		} else {
+			if version.Revision <= 0 {
+				version.Revision = 1
+			}
+			if err := lifecyclepolicy.ValidatePolicyPublication(nil, version); err != nil {
+				return err
+			}
+		}
 		if err := s.policies.SavePolicy(transactionContext, version); err != nil {
 			return err
 		}
@@ -102,26 +111,27 @@ func (s *LifecycleApplicationService) PublishPolicy(ctx context.Context, version
 }
 
 func (s *LifecycleApplicationService) ListPolicies(ctx context.Context, principal lifecycleaccess.Principal) ([]lifecyclemodel.PolicyVersion, error) {
-	if err := lifecycleAuthorize(principal, lifecyclesdk.ActionLifecyclePoliciesList); err != nil {
+	filter, err := lifecycleDataScope(ctx, principal, lifecyclesdk.ActionLifecyclePoliciesList)
+	if err != nil {
 		return nil, err
 	}
-	return s.policies.ListPolicies(ctx, principal.WorkspaceID)
+	return s.policies.ListPolicies(ctx, principal.WorkspaceID, filter)
 }
 
 func (s *LifecycleApplicationService) CreateLegalHold(ctx context.Context, hold lifecyclemodel.LegalHold, principal lifecycleaccess.Principal) (lifecyclemodel.LegalHold, error) {
-	if err := lifecycleAuthorize(principal, lifecyclesdk.ActionLifecycleLegalHoldsCreate); err != nil {
+	filter, err := lifecycleCreationDataScope(ctx, principal, principal.WorkspaceID, lifecyclesdk.ActionLifecycleLegalHoldsCreate)
+	if err != nil {
 		return lifecyclemodel.LegalHold{}, err
 	}
 	if hold.WorkspaceID != principal.WorkspaceID {
 		return lifecyclemodel.LegalHold{}, fmt.Errorf("lifecycle workspace scope mismatch")
 	}
-	if hold.ID == "" {
-		hold.ID = requestcontext.NewRequestID()
-	}
+	hold.ID = requestcontext.NewRequestID()
+	hold.CreatedBy, hold.OwnerOrgID = principal.UserID, filter.SubjectOrgID
 	if err := lifecyclepolicy.ValidateLegalHold(hold); err != nil {
 		return lifecyclemodel.LegalHold{}, err
 	}
-	err := s.withinTransaction(ctx, func(transactionContext context.Context) error {
+	err = s.withinTransaction(ctx, func(transactionContext context.Context) error {
 		if err := s.legalHolds.SaveLegalHold(transactionContext, hold); err != nil {
 			return err
 		}
@@ -131,20 +141,28 @@ func (s *LifecycleApplicationService) CreateLegalHold(ctx context.Context, hold 
 }
 
 func (s *LifecycleApplicationService) EndLegalHold(ctx context.Context, workspaceID, holdID, authority, evidence string, endedAt time.Time, principal lifecycleaccess.Principal) (lifecyclemodel.LegalHold, error) {
-	if err := lifecycleAuthorizeWorkspace(principal, workspaceID, lifecyclesdk.ActionLifecycleLegalHoldsEnd); err != nil {
+	filter, err := lifecycleWorkspaceDataScope(ctx, principal, workspaceID, lifecyclesdk.ActionLifecycleLegalHoldsEnd)
+	if err != nil {
 		return lifecyclemodel.LegalHold{}, err
 	}
-	hold, found, err := s.legalHolds.GetLegalHold(ctx, workspaceID, holdID)
-	if err != nil || !found {
-		return lifecyclemodel.LegalHold{}, fmt.Errorf("legal hold not found")
-	}
-	if strings.TrimSpace(authority) == "" || strings.TrimSpace(evidence) == "" || endedAt.IsZero() || !endedAt.After(hold.StartsAt) {
-		return lifecyclemodel.LegalHold{}, fmt.Errorf("legal hold release authority, evidence and valid end are required")
-	}
-	hold.Authority, hold.AuditEvidence, hold.EndsAt = strings.TrimSpace(authority), strings.TrimSpace(evidence), &endedAt
+	var hold lifecyclemodel.LegalHold
 	err = s.withinTransaction(ctx, func(transactionContext context.Context) error {
-		if err := s.legalHolds.SaveLegalHold(transactionContext, hold); err != nil {
+		var found bool
+		var err error
+		hold, found, err = s.legalHolds.GetLegalHold(transactionContext, workspaceID, holdID, filter)
+		if err != nil || !found {
+			return fmt.Errorf("legal hold not found")
+		}
+		if strings.TrimSpace(authority) == "" || strings.TrimSpace(evidence) == "" || endedAt.IsZero() || !endedAt.After(hold.StartsAt) {
+			return fmt.Errorf("legal hold release authority, evidence and valid end are required")
+		}
+		hold.Authority, hold.AuditEvidence, hold.EndsAt = strings.TrimSpace(authority), strings.TrimSpace(evidence), &endedAt
+		updated, err := s.legalHolds.UpdateLegalHold(transactionContext, hold, filter)
+		if err != nil {
 			return err
+		}
+		if !updated {
+			return fmt.Errorf("legal hold not found")
 		}
 		return s.audit(transactionContext, workspaceID, "lifecycle.legal_hold.ended", principal.UserID, hold.ID, "", hold)
 	})
@@ -152,10 +170,11 @@ func (s *LifecycleApplicationService) EndLegalHold(ctx context.Context, workspac
 }
 
 func (s *LifecycleApplicationService) PreviewCleanup(ctx context.Context, workspaceID, policyKey string, principal lifecycleaccess.Principal, now time.Time) (lifecyclecontract.CleanupPreview, error) {
-	if err := lifecycleAuthorizeWorkspace(principal, workspaceID, lifecyclesdk.ActionLifecycleCleanupPreview); err != nil {
+	filter, err := lifecycleWorkspaceDataScope(ctx, principal, workspaceID, lifecyclesdk.ActionLifecycleCleanupPreview)
+	if err != nil {
 		return lifecyclecontract.CleanupPreview{}, err
 	}
-	policyVersion, executor, err := s.policyExecutor(ctx, workspaceID, policyKey)
+	policyVersion, executor, err := s.policyExecutor(ctx, workspaceID, policyKey, filter)
 	if err != nil {
 		return lifecyclecontract.CleanupPreview{}, err
 	}
@@ -167,18 +186,20 @@ func (s *LifecycleApplicationService) PreviewCleanup(ctx context.Context, worksp
 }
 
 func (s *LifecycleApplicationService) CreateCleanupJob(ctx context.Context, job lifecyclemodel.CleanupJob, principal lifecycleaccess.Principal) (lifecyclemodel.CleanupJob, error) {
-	if err := lifecycleAuthorizeWorkspace(principal, job.WorkspaceID, lifecyclesdk.ActionLifecycleCleanupJobsCreate); err != nil {
-		return lifecyclemodel.CleanupJob{}, err
-	}
-	policyVersion, executor, err := s.policyExecutor(ctx, job.WorkspaceID, job.PolicyKey)
+	filter, err := lifecycleCreationDataScope(ctx, principal, job.WorkspaceID, lifecyclesdk.ActionLifecycleCleanupJobsCreate)
 	if err != nil {
 		return lifecyclemodel.CleanupJob{}, err
 	}
-	if job.ID == "" {
-		job.ID = requestcontext.NewRequestID()
+	// The exact create grant scopes the new cleanup job, whose requester and
+	// organization are server-owned below. The referenced policy is an internal
+	// prerequisite, not a cleanup-job record selected by the caller.
+	policyVersion, executor, err := s.policyExecutor(ctx, job.WorkspaceID, job.PolicyKey, lifecyclepersistence.UnrestrictedDataScopeFilter())
+	if err != nil {
+		return lifecyclemodel.CleanupJob{}, err
 	}
+	job.ID = requestcontext.NewRequestID()
 	job.PolicyVersion = policyVersion.Policy.Version
-	job.RequestedBy = principal.UserID
+	job.RequestedBy, job.OwnerOrgID = principal.UserID, filter.SubjectOrgID
 	if job.Status == "" {
 		job.Status = lifecyclemodel.CleanupStatusPending
 	}
@@ -218,7 +239,7 @@ func (s *LifecycleApplicationService) ProcessCleanupJob(ctx context.Context, wor
 	if err != nil || !acquired {
 		return claimed, err
 	}
-	policyVersion, executor, err := s.policyExecutor(ctx, workspaceID, claimed.PolicyKey)
+	policyVersion, executor, err := s.policyExecutor(ctx, workspaceID, claimed.PolicyKey, lifecyclepersistence.UnrestrictedDataScopeFilter())
 	if err != nil {
 		return s.failCleanup(ctx, claimed, err, now, principal.UserID)
 	}
@@ -274,13 +295,12 @@ func (s *LifecycleApplicationService) ProcessCleanupJob(ctx context.Context, wor
 }
 
 func (s *LifecycleApplicationService) CreateSubjectRequest(ctx context.Context, request lifecyclemodel.SubjectRequest, principal lifecycleaccess.Principal) (lifecyclemodel.SubjectRequest, error) {
-	if err := lifecycleAuthorizeWorkspace(principal, request.WorkspaceID, lifecyclesdk.ActionLifecycleSubjectRequestsCreate); err != nil {
+	filter, err := lifecycleCreationDataScope(ctx, principal, request.WorkspaceID, lifecyclesdk.ActionLifecycleSubjectRequestsCreate)
+	if err != nil {
 		return lifecyclemodel.SubjectRequest{}, err
 	}
-	if request.ID == "" {
-		request.ID = requestcontext.NewRequestID()
-	}
-	request.RequestedBy, request.Status = principal.UserID, lifecyclemodel.SubjectRequestPendingVerification
+	request.ID = requestcontext.NewRequestID()
+	request.RequestedBy, request.OwnerOrgID, request.Status = principal.UserID, filter.SubjectOrgID, lifecyclemodel.SubjectRequestPendingVerification
 	request.CreatedAt, request.UpdatedAt = time.Now().UTC(), time.Now().UTC()
 	if request.Kind != lifecyclemodel.SubjectRequestExport && request.Kind != lifecyclemodel.SubjectRequestErase {
 		return lifecyclemodel.SubjectRequest{}, fmt.Errorf("unsupported subject request kind")
@@ -288,7 +308,7 @@ func (s *LifecycleApplicationService) CreateSubjectRequest(ctx context.Context, 
 	if request.SubjectID == "" || request.SubjectType == "" || request.Reason == "" {
 		return lifecyclemodel.SubjectRequest{}, fmt.Errorf("subject identity and reason are required")
 	}
-	err := s.withinTransaction(ctx, func(transactionContext context.Context) error {
+	err = s.withinTransaction(ctx, func(transactionContext context.Context) error {
 		if err := s.subjectRequests.SaveSubjectRequest(transactionContext, request); err != nil {
 			return err
 		}
@@ -298,10 +318,11 @@ func (s *LifecycleApplicationService) CreateSubjectRequest(ctx context.Context, 
 }
 
 func (s *LifecycleApplicationService) VerifySubjectRequest(ctx context.Context, workspaceID, requestID, secondFactor string, principal lifecycleaccess.Principal) (lifecyclemodel.SubjectRequest, error) {
-	if err := lifecycleAuthorizeWorkspace(principal, workspaceID, lifecyclesdk.ActionLifecycleSubjectRequestsVerify); err != nil {
+	filter, err := lifecycleWorkspaceDataScope(ctx, principal, workspaceID, lifecyclesdk.ActionLifecycleSubjectRequestsVerify)
+	if err != nil {
 		return lifecyclemodel.SubjectRequest{}, err
 	}
-	request, err := s.subjectRequest(ctx, workspaceID, requestID)
+	request, err := s.subjectRequest(ctx, workspaceID, requestID, filter)
 	if err != nil {
 		return lifecyclemodel.SubjectRequest{}, err
 	}
@@ -314,14 +335,15 @@ func (s *LifecycleApplicationService) VerifySubjectRequest(ctx context.Context, 
 	}
 	next := request
 	next.Status, next.ResolvedIdentity, next.VerifiedBy, next.SecondFactorRef, next.UpdatedAt = lifecyclemodel.SubjectRequestVerified, resolved, principal.UserID, strings.TrimSpace(secondFactor), time.Now().UTC()
-	return s.transitionSubject(ctx, request, next, principal.UserID, "lifecycle.subject.verified")
+	return s.transitionSubject(ctx, request, next, principal.UserID, "lifecycle.subject.verified", filter)
 }
 
 func (s *LifecycleApplicationService) PreviewSubjectRequest(ctx context.Context, workspaceID, requestID string, principal lifecycleaccess.Principal) (lifecyclemodel.SubjectRequest, error) {
-	if err := lifecycleAuthorizeWorkspace(principal, workspaceID, lifecyclesdk.ActionLifecycleSubjectRequestsPreview); err != nil {
+	filter, err := lifecycleWorkspaceDataScope(ctx, principal, workspaceID, lifecyclesdk.ActionLifecycleSubjectRequestsPreview)
+	if err != nil {
 		return lifecyclemodel.SubjectRequest{}, err
 	}
-	request, err := s.subjectRequest(ctx, workspaceID, requestID)
+	request, err := s.subjectRequest(ctx, workspaceID, requestID, filter)
 	if err != nil {
 		return lifecyclemodel.SubjectRequest{}, err
 	}
@@ -336,27 +358,29 @@ func (s *LifecycleApplicationService) PreviewSubjectRequest(ctx context.Context,
 	raw, _ := json.Marshal(preview)
 	next := request
 	next.Status, next.ImpactPreview, next.UpdatedAt = lifecyclemodel.SubjectRequestPreviewed, raw, time.Now().UTC()
-	return s.transitionSubject(ctx, request, next, principal.UserID, "lifecycle.subject.previewed")
+	return s.transitionSubject(ctx, request, next, principal.UserID, "lifecycle.subject.previewed", filter)
 }
 
 func (s *LifecycleApplicationService) ApproveSubjectRequest(ctx context.Context, workspaceID, requestID string, principal lifecycleaccess.Principal) (lifecyclemodel.SubjectRequest, error) {
-	if err := lifecycleAuthorizeWorkspace(principal, workspaceID, lifecyclesdk.ActionLifecycleSubjectRequestsApprove); err != nil {
+	filter, err := lifecycleWorkspaceDataScope(ctx, principal, workspaceID, lifecyclesdk.ActionLifecycleSubjectRequestsApprove)
+	if err != nil {
 		return lifecyclemodel.SubjectRequest{}, err
 	}
-	request, err := s.subjectRequest(ctx, workspaceID, requestID)
+	request, err := s.subjectRequest(ctx, workspaceID, requestID, filter)
 	if err != nil {
 		return lifecyclemodel.SubjectRequest{}, err
 	}
 	next := request
 	next.Status, next.ApprovedBy, next.UpdatedAt = lifecyclemodel.SubjectRequestApproved, principal.UserID, time.Now().UTC()
-	return s.transitionSubject(ctx, request, next, principal.UserID, "lifecycle.subject.approved")
+	return s.transitionSubject(ctx, request, next, principal.UserID, "lifecycle.subject.approved", filter)
 }
 
 func (s *LifecycleApplicationService) ExecuteSubjectRequest(ctx context.Context, workspaceID, requestID string, principal lifecycleaccess.Principal) (lifecyclemodel.SubjectRequest, error) {
-	if err := lifecycleAuthorizeWorkspaceOrSystem(principal, workspaceID, lifecyclesdk.ActionLifecycleSubjectRequestsExecute); err != nil {
+	filter, err := lifecycleWorkspaceOrSystemDataScope(ctx, principal, workspaceID, lifecyclesdk.ActionLifecycleSubjectRequestsExecute)
+	if err != nil {
 		return lifecyclemodel.SubjectRequest{}, err
 	}
-	request, err := s.subjectRequest(ctx, workspaceID, requestID)
+	request, err := s.subjectRequest(ctx, workspaceID, requestID, filter)
 	if err != nil {
 		return lifecyclemodel.SubjectRequest{}, err
 	}
@@ -365,7 +389,7 @@ func (s *LifecycleApplicationService) ExecuteSubjectRequest(ctx context.Context,
 	executing.ExecutionAttempt++
 	executing.ExecutionLeaseEnd = executing.UpdatedAt.Add(5 * time.Minute)
 	executing.LastError = ""
-	if executing, err = s.transitionSubject(ctx, request, executing, principal.UserID, "lifecycle.subject.executing"); err != nil {
+	if executing, err = s.transitionSubject(ctx, request, executing, principal.UserID, "lifecycle.subject.executing", filter); err != nil {
 		return lifecyclemodel.SubjectRequest{}, err
 	}
 	result := map[string]json.RawMessage{}
@@ -400,6 +424,9 @@ func (s *LifecycleApplicationService) ExecuteSubjectRequest(ctx context.Context,
 			}
 		}
 		if err == nil {
+			for index := range values {
+				values[index].WorkspaceID, values[index].RequestID = workspaceID, executing.ID
+			}
 			payload, marshalErr := json.Marshal(values)
 			if marshalErr != nil {
 				err = marshalErr
@@ -446,7 +473,7 @@ func (s *LifecycleApplicationService) ExecuteSubjectRequest(ctx context.Context,
 	completed.ExecutionLeaseEnd = time.Time{}
 	if err != nil {
 		completed.Status, completed.LastError = lifecyclemodel.SubjectRequestFailed, err.Error()
-		return s.transitionSubject(ctx, executing, completed, principal.UserID, "lifecycle.subject.failed")
+		return s.transitionSubject(ctx, executing, completed, principal.UserID, "lifecycle.subject.failed", filter)
 	}
 	raw, _ := json.Marshal(result)
 	if completed.Kind == lifecyclemodel.SubjectRequestExport {
@@ -462,14 +489,14 @@ func (s *LifecycleApplicationService) ExecuteSubjectRequest(ctx context.Context,
 	}
 	if err != nil {
 		completed.Status, completed.LastError = lifecyclemodel.SubjectRequestFailed, err.Error()
-		return s.transitionSubject(ctx, executing, completed, principal.UserID, "lifecycle.subject.failed")
+		return s.transitionSubject(ctx, executing, completed, principal.UserID, "lifecycle.subject.failed", filter)
 	}
 	completed.Status = lifecyclemodel.SubjectRequestSucceeded
 	if completed.Kind == lifecyclemodel.SubjectRequestErase {
 		registration := lifecyclemodel.DeletionRegistration{RequestID: completed.ID, WorkspaceID: workspaceID, ResolvedIdentity: completed.ResolvedIdentity, BackupPending: true, Evidence: completed.ResultReference, UpdatedAt: completed.UpdatedAt}
-		return s.transitionSubjectWith(ctx, executing, completed, principal.UserID, "lifecycle.subject.succeeded", func(transactionContext context.Context) error {
+		return s.transitionSubjectWith(ctx, executing, completed, principal.UserID, "lifecycle.subject.succeeded", filter, func(transactionContext context.Context) error {
 			return s.subjectRequests.SaveDeletionRegistration(transactionContext, registration)
 		})
 	}
-	return s.transitionSubject(ctx, executing, completed, principal.UserID, "lifecycle.subject.succeeded")
+	return s.transitionSubject(ctx, executing, completed, principal.UserID, "lifecycle.subject.succeeded", filter)
 }

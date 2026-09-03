@@ -12,6 +12,7 @@ import (
 	lifecycleaccess "github.com/domainry/domainry-lifecycle-sdk/access"
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
 	lifecyclemodel "github.com/domainry/domainry-lifecycle/internal/domain/lifecycle/model"
+	lifecyclepersistence "github.com/domainry/domainry-lifecycle/internal/domain/lifecycle/repository"
 	"github.com/domainry/domainry-orm/query"
 )
 
@@ -32,8 +33,8 @@ func (s LifecycleStore) database(ctx context.Context) modulehost.DBTX {
 func (s LifecycleStore) SavePolicy(ctx context.Context, version lifecyclemodel.PolicyVersion) error {
 	payload, _ := json.Marshal(version)
 	queryValue, args, buildErr := query.NewWorkspaceInsertBuilder(s.renderer, "_lifecycle_policy_versions", version.WorkspaceID).
-		Columns("policy_key", "version", "revision", "status", "payload_json", "published_at").
-		Values(version.Policy.Key, version.Policy.Version, version.Revision, version.Status, string(payload), lifecycleTime(version.PublishedAt)).Build()
+		Columns("policy_key", "version", "revision", "status", "published_by", "owner_org_id", "payload_json", "published_at").
+		Values(version.Policy.Key, version.Policy.Version, version.Revision, version.Status, version.PublishedBy, version.OwnerOrgID, string(payload), lifecycleTime(version.PublishedAt)).Build()
 	if buildErr != nil {
 		return fmt.Errorf("build lifecycle policy insert: %w", buildErr)
 	}
@@ -44,17 +45,17 @@ func (s LifecycleStore) SavePolicy(ctx context.Context, version lifecyclemodel.P
 	return nil
 }
 
-func (s LifecycleStore) LatestPolicy(ctx context.Context, workspaceID, policyKey string) (lifecyclemodel.PolicyVersion, bool, error) {
-	version, found, err := s.latestPolicyForWorkspace(ctx, workspaceID, policyKey)
+func (s LifecycleStore) LatestPolicy(ctx context.Context, workspaceID, policyKey string, filter lifecyclepersistence.DataScopeFilter) (lifecyclemodel.PolicyVersion, bool, error) {
+	version, found, err := s.latestPolicyForWorkspace(ctx, workspaceID, policyKey, filter)
 	if err != nil || found || workspaceID == lifecycleaccess.InstallationWorkspaceID {
 		return version, found, err
 	}
-	return s.latestPolicyForWorkspace(ctx, lifecycleaccess.InstallationWorkspaceID, policyKey)
+	return s.latestPolicyForWorkspace(ctx, lifecycleaccess.InstallationWorkspaceID, policyKey, filter)
 }
 
-func (s LifecycleStore) latestPolicyForWorkspace(ctx context.Context, workspaceID, policyKey string) (lifecyclemodel.PolicyVersion, bool, error) {
+func (s LifecycleStore) latestPolicyForWorkspace(ctx context.Context, workspaceID, policyKey string, filter lifecyclepersistence.DataScopeFilter) (lifecyclemodel.PolicyVersion, bool, error) {
 	queryValue, args, buildErr := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_policy_versions", workspaceID).Columns("payload_json").
-		Where(query.And(query.Equal("policy_key", policyKey), query.Equal("status", lifecyclemodel.PolicyStatusPublished))).
+		Where(andPredicates(query.Equal("policy_key", policyKey), query.Equal("status", lifecyclemodel.PolicyStatusPublished), dataScopePredicate(filter, "published_by", "owner_org_id"))).
 		OrderBy(query.Descending("revision")).Limit(1).Build()
 	if buildErr != nil {
 		return lifecyclemodel.PolicyVersion{}, false, fmt.Errorf("build lifecycle policy query: %w", buildErr)
@@ -74,9 +75,12 @@ func (s LifecycleStore) latestPolicyForWorkspace(ctx context.Context, workspaceI
 	return version, true, nil
 }
 
-func (s LifecycleStore) ListPolicies(ctx context.Context, workspaceID string) ([]lifecyclemodel.PolicyVersion, error) {
-	queryValue, args, buildErr := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_policy_versions", workspaceID).Columns("payload_json").
-		OrderBy(query.Ascending("policy_key"), query.Descending("revision")).Build()
+func (s LifecycleStore) ListPolicies(ctx context.Context, workspaceID string, filter lifecyclepersistence.DataScopeFilter) ([]lifecyclemodel.PolicyVersion, error) {
+	builder := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_policy_versions", workspaceID).Columns("payload_json")
+	if predicate := dataScopePredicate(filter, "published_by", "owner_org_id"); predicate != nil {
+		builder.Where(predicate)
+	}
+	queryValue, args, buildErr := builder.OrderBy(query.Ascending("policy_key"), query.Descending("revision")).Build()
 	if buildErr != nil {
 		return nil, fmt.Errorf("build lifecycle policy list: %w", buildErr)
 	}
@@ -106,39 +110,21 @@ func (s LifecycleStore) SaveLegalHold(ctx context.Context, hold lifecyclemodel.L
 	if hold.EndsAt != nil {
 		ends = lifecycleTime(*hold.EndsAt)
 	}
-	queryValue, args, buildErr := query.NewWorkspaceUpdateBuilder(s.renderer, "_lifecycle_legal_holds", hold.WorkspaceID).
-		Set("owner", hold.Owner).Set("resource_type", hold.ResourceType).Set("resource_id", hold.ResourceID).
-		Set("starts_at", lifecycleTime(hold.StartsAt)).Set("ends_at", ends).Set("review_at", lifecycleTime(hold.ReviewAt)).Set("payload_json", string(payload)).
-		Where(query.Equal("id", hold.ID)).Build()
-	if buildErr != nil {
-		return fmt.Errorf("build lifecycle legal hold update: %w", buildErr)
-	}
-	result, err := s.database(ctx).ExecContext(ctx, queryValue, args...)
-	if err != nil {
-		return err
-	}
-	changed, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("read updated lifecycle legal hold count: %w", err)
-	}
-	if changed > 0 {
-		return nil
-	}
-	queryValue, args, buildErr = query.NewWorkspaceInsertBuilder(s.renderer, "_lifecycle_legal_holds", hold.WorkspaceID).
-		Columns("id", "owner", "resource_type", "resource_id", "starts_at", "ends_at", "review_at", "payload_json").
-		Values(hold.ID, hold.Owner, hold.ResourceType, hold.ResourceID, lifecycleTime(hold.StartsAt), ends, lifecycleTime(hold.ReviewAt), string(payload)).Build()
+	queryValue, args, buildErr := query.NewWorkspaceInsertBuilder(s.renderer, "_lifecycle_legal_holds", hold.WorkspaceID).
+		Columns("id", "owner", "resource_type", "resource_id", "created_by", "owner_org_id", "starts_at", "ends_at", "review_at", "payload_json").
+		Values(hold.ID, hold.Owner, hold.ResourceType, hold.ResourceID, hold.CreatedBy, hold.OwnerOrgID, lifecycleTime(hold.StartsAt), ends, lifecycleTime(hold.ReviewAt), string(payload)).Build()
 	if buildErr != nil {
 		return fmt.Errorf("build lifecycle legal hold insert: %w", buildErr)
 	}
-	_, err = s.database(ctx).ExecContext(ctx, queryValue, args...)
+	_, err := s.database(ctx).ExecContext(ctx, queryValue, args...)
 	if err != nil {
 		return fmt.Errorf("save lifecycle legal hold: %w", err)
 	}
 	return nil
 }
 
-func (s LifecycleStore) GetLegalHold(ctx context.Context, workspaceID, holdID string) (lifecyclemodel.LegalHold, bool, error) {
-	queryValue, args, buildErr := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_legal_holds", workspaceID).Columns("payload_json").Where(query.Equal("id", holdID)).Build()
+func (s LifecycleStore) GetLegalHold(ctx context.Context, workspaceID, holdID string, filter lifecyclepersistence.DataScopeFilter) (lifecyclemodel.LegalHold, bool, error) {
+	queryValue, args, buildErr := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_legal_holds", workspaceID).Columns("payload_json").Where(andPredicates(query.Equal("id", holdID), dataScopePredicate(filter, "created_by", "owner_org_id"))).Build()
 	if buildErr != nil {
 		return lifecyclemodel.LegalHold{}, false, fmt.Errorf("build lifecycle legal hold query: %w", buildErr)
 	}
@@ -153,6 +139,30 @@ func (s LifecycleStore) GetLegalHold(ctx context.Context, workspaceID, holdID st
 		return lifecyclemodel.LegalHold{}, false, err
 	}
 	return hold, true, nil
+}
+
+func (s LifecycleStore) UpdateLegalHold(ctx context.Context, hold lifecyclemodel.LegalHold, filter lifecyclepersistence.DataScopeFilter) (bool, error) {
+	payload, _ := json.Marshal(hold)
+	ends := ""
+	if hold.EndsAt != nil {
+		ends = lifecycleTime(*hold.EndsAt)
+	}
+	queryValue, args, buildErr := query.NewWorkspaceUpdateBuilder(s.renderer, "_lifecycle_legal_holds", hold.WorkspaceID).
+		Set("owner", hold.Owner).Set("resource_type", hold.ResourceType).Set("resource_id", hold.ResourceID).
+		Set("starts_at", lifecycleTime(hold.StartsAt)).Set("ends_at", ends).Set("review_at", lifecycleTime(hold.ReviewAt)).Set("payload_json", string(payload)).
+		Where(andPredicates(query.Equal("id", hold.ID), dataScopePredicate(filter, "created_by", "owner_org_id"))).Build()
+	if buildErr != nil {
+		return false, fmt.Errorf("build lifecycle legal hold update: %w", buildErr)
+	}
+	result, err := s.database(ctx).ExecContext(ctx, queryValue, args...)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("read updated lifecycle legal hold count: %w", err)
+	}
+	return changed == 1, nil
 }
 
 func (s LifecycleStore) ActiveLegalHolds(ctx context.Context, target lifecyclemodel.ResourceTarget, now time.Time) ([]lifecyclemodel.LegalHold, error) {
@@ -188,8 +198,8 @@ func (s LifecycleStore) ActiveLegalHolds(ctx context.Context, target lifecyclemo
 func (s LifecycleStore) SaveCleanupJob(ctx context.Context, job lifecyclemodel.CleanupJob) error {
 	payload, _ := json.Marshal(job)
 	queryValue, args, buildErr := query.NewWorkspaceInsertBuilder(s.renderer, "_lifecycle_cleanup_jobs", job.WorkspaceID).
-		Columns("id", "policy_key", "policy_version", "status", "checkpoint_value", "lease_owner", "lease_expires_at", "fencing_token", "updated_at", "payload_json").
-		Values(job.ID, job.PolicyKey, job.PolicyVersion, job.Status, job.Checkpoint, job.LeaseOwner, lifecycleTime(job.LeaseExpiresAt), job.FencingToken, lifecycleTime(job.UpdatedAt), string(payload)).Build()
+		Columns("id", "policy_key", "policy_version", "status", "requested_by", "owner_org_id", "checkpoint_value", "lease_owner", "lease_expires_at", "fencing_token", "updated_at", "payload_json").
+		Values(job.ID, job.PolicyKey, job.PolicyVersion, job.Status, job.RequestedBy, job.OwnerOrgID, job.Checkpoint, job.LeaseOwner, lifecycleTime(job.LeaseExpiresAt), job.FencingToken, lifecycleTime(job.UpdatedAt), string(payload)).Build()
 	if buildErr != nil {
 		return fmt.Errorf("build lifecycle cleanup job insert: %w", buildErr)
 	}
@@ -319,7 +329,7 @@ func (s LifecycleStore) SaveSubjectRequest(ctx context.Context, request lifecycl
 	}
 	queryValue, args, buildErr := query.NewWorkspaceUpdateBuilder(s.renderer, "_lifecycle_subject_requests", request.WorkspaceID).
 		Set("kind", request.Kind).Set("status", request.Status).Set("subject_id", request.SubjectID).Set("resolved_identity", request.ResolvedIdentity).
-		Set("download_expires_at", lifecycleTime(request.DownloadExpiresAt)).Set("updated_at", lifecycleTime(request.UpdatedAt)).Set("payload_json", string(payload)).
+		Set("requested_by", request.RequestedBy).Set("owner_org_id", request.OwnerOrgID).Set("download_expires_at", lifecycleTime(request.DownloadExpiresAt)).Set("updated_at", lifecycleTime(request.UpdatedAt)).Set("payload_json", string(payload)).
 		Where(query.Equal("id", request.ID)).Build()
 	if buildErr != nil {
 		return fmt.Errorf("build lifecycle subject request update: %w", buildErr)
@@ -336,8 +346,8 @@ func (s LifecycleStore) SaveSubjectRequest(ctx context.Context, request lifecycl
 		return nil
 	}
 	queryValue, args, buildErr = query.NewWorkspaceInsertBuilder(s.renderer, "_lifecycle_subject_requests", request.WorkspaceID).
-		Columns("id", "kind", "status", "subject_id", "resolved_identity", "download_expires_at", "updated_at", "payload_json").
-		Values(request.ID, request.Kind, request.Status, request.SubjectID, request.ResolvedIdentity, lifecycleTime(request.DownloadExpiresAt), lifecycleTime(request.UpdatedAt), string(payload)).Build()
+		Columns("id", "kind", "status", "subject_id", "resolved_identity", "requested_by", "owner_org_id", "download_expires_at", "updated_at", "payload_json").
+		Values(request.ID, request.Kind, request.Status, request.SubjectID, request.ResolvedIdentity, request.RequestedBy, request.OwnerOrgID, lifecycleTime(request.DownloadExpiresAt), lifecycleTime(request.UpdatedAt), string(payload)).Build()
 	if buildErr != nil {
 		return fmt.Errorf("build lifecycle subject request insert: %w", buildErr)
 	}
@@ -345,7 +355,7 @@ func (s LifecycleStore) SaveSubjectRequest(ctx context.Context, request lifecycl
 	return err
 }
 
-func (s LifecycleStore) TransitionSubjectRequest(ctx context.Context, current, next lifecyclemodel.SubjectRequest) error {
+func (s LifecycleStore) TransitionSubjectRequest(ctx context.Context, current, next lifecyclemodel.SubjectRequest, filter lifecyclepersistence.DataScopeFilter) error {
 	payload, err := json.Marshal(next)
 	if err != nil {
 		return err
@@ -353,7 +363,7 @@ func (s LifecycleStore) TransitionSubjectRequest(ctx context.Context, current, n
 	queryValue, args, buildErr := query.NewWorkspaceUpdateBuilder(s.renderer, "_lifecycle_subject_requests", next.WorkspaceID).
 		Set("kind", next.Kind).Set("status", next.Status).Set("subject_id", next.SubjectID).Set("resolved_identity", next.ResolvedIdentity).
 		Set("download_expires_at", lifecycleTime(next.DownloadExpiresAt)).Set("updated_at", lifecycleTime(next.UpdatedAt)).Set("payload_json", string(payload)).
-		Where(query.And(query.Equal("id", next.ID), query.Equal("status", current.Status), query.Equal("updated_at", lifecycleTime(current.UpdatedAt)))).Build()
+		Where(andPredicates(query.Equal("id", next.ID), query.Equal("status", current.Status), query.Equal("updated_at", lifecycleTime(current.UpdatedAt)), dataScopePredicate(filter, "requested_by", "owner_org_id"))).Build()
 	if buildErr != nil {
 		return fmt.Errorf("build lifecycle subject transition: %w", buildErr)
 	}
@@ -371,8 +381,8 @@ func (s LifecycleStore) TransitionSubjectRequest(ctx context.Context, current, n
 	return nil
 }
 
-func (s LifecycleStore) GetSubjectRequest(ctx context.Context, workspaceID, id string) (lifecyclemodel.SubjectRequest, bool, error) {
-	queryValue, args, buildErr := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_subject_requests", workspaceID).Columns("payload_json").Where(query.Equal("id", id)).Build()
+func (s LifecycleStore) GetSubjectRequest(ctx context.Context, workspaceID, id string, filter lifecyclepersistence.DataScopeFilter) (lifecyclemodel.SubjectRequest, bool, error) {
+	queryValue, args, buildErr := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_subject_requests", workspaceID).Columns("payload_json").Where(andPredicates(query.Equal("id", id), dataScopePredicate(filter, "requested_by", "owner_org_id"))).Build()
 	if buildErr != nil {
 		return lifecyclemodel.SubjectRequest{}, false, fmt.Errorf("build lifecycle subject request query: %w", buildErr)
 	}
@@ -463,10 +473,14 @@ func (s LifecycleStore) SaveExternalErasures(ctx context.Context, erasures []lif
 	return nil
 }
 
-func (s LifecycleStore) ListExternalErasures(ctx context.Context, workspaceID, requestID string) ([]lifecyclemodel.ExternalErasure, error) {
+func (s LifecycleStore) ListExternalErasures(ctx context.Context, workspaceID, requestID string, filter lifecyclepersistence.DataScopeFilter) ([]lifecyclemodel.ExternalErasure, error) {
 	selectBuilder := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_external_erasure_requests", workspaceID).Columns("payload_json")
+	predicates := []query.Predicate{s.subjectRequestScopePredicate(workspaceID, filter)}
 	if strings.TrimSpace(requestID) != "" {
-		selectBuilder.Where(query.Equal("request_id", strings.TrimSpace(requestID)))
+		predicates = append(predicates, query.Equal("request_id", strings.TrimSpace(requestID)))
+	}
+	if predicate := andPredicates(predicates...); predicate != nil {
+		selectBuilder.Where(predicate)
 	}
 	queryValue, args, buildErr := selectBuilder.Build()
 	if buildErr != nil {
@@ -492,8 +506,9 @@ func (s LifecycleStore) ListExternalErasures(ctx context.Context, workspaceID, r
 	return items, rows.Err()
 }
 
-func (s LifecycleStore) ReconcileExternalErasure(ctx context.Context, workspaceID, id, evidence string, at time.Time) (lifecyclemodel.ExternalErasure, bool, error) {
-	queryValue, args, buildErr := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_external_erasure_requests", workspaceID).Columns("payload_json").Where(query.Equal("id", id)).Build()
+func (s LifecycleStore) ReconcileExternalErasure(ctx context.Context, workspaceID, id, evidence string, at time.Time, filter lifecyclepersistence.DataScopeFilter) (lifecyclemodel.ExternalErasure, bool, error) {
+	scopePredicate := s.subjectRequestScopePredicate(workspaceID, filter)
+	queryValue, args, buildErr := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_external_erasure_requests", workspaceID).Columns("payload_json").Where(andPredicates(query.Equal("id", id), scopePredicate)).Build()
 	if buildErr != nil {
 		return lifecyclemodel.ExternalErasure{}, false, fmt.Errorf("build external erasure query: %w", buildErr)
 	}
@@ -510,7 +525,7 @@ func (s LifecycleStore) ReconcileExternalErasure(ctx context.Context, workspaceI
 	item.Status, item.Evidence, item.ReconciledAt = "reconciled", strings.TrimSpace(evidence), at
 	updated, _ := json.Marshal(item)
 	queryValue, args, buildErr = query.NewWorkspaceUpdateBuilder(s.renderer, "_lifecycle_external_erasure_requests", workspaceID).
-		Set("status", item.Status).Set("payload_json", string(updated)).Where(query.Equal("id", id)).Build()
+		Set("status", item.Status).Set("payload_json", string(updated)).Where(andPredicates(query.Equal("id", id), scopePredicate)).Build()
 	if buildErr != nil {
 		return lifecyclemodel.ExternalErasure{}, false, fmt.Errorf("build external erasure reconciliation: %w", buildErr)
 	}
@@ -553,12 +568,12 @@ func (s LifecycleStore) SaveDeletionRegistration(ctx context.Context, registrati
 	return err
 }
 
-func (s LifecycleStore) ListPendingDeletionRegistrations(ctx context.Context, workspaceID string, limit int) ([]lifecyclemodel.DeletionRegistration, error) {
+func (s LifecycleStore) ListPendingDeletionRegistrations(ctx context.Context, workspaceID string, limit int, filter lifecyclepersistence.DataScopeFilter) ([]lifecyclemodel.DeletionRegistration, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
 	queryValue, args, buildErr := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_deletion_registry", workspaceID).
-		Columns("request_id", "workspace_id", "resolved_identity", "backup_pending", "evidence", "updated_at").Where(query.Equal("backup_pending", true)).
+		Columns("request_id", "workspace_id", "resolved_identity", "backup_pending", "evidence", "updated_at").Where(andPredicates(query.Equal("backup_pending", true), s.subjectRequestScopePredicate(workspaceID, filter))).
 		OrderBy(query.Ascending("updated_at")).Limit(limit).Build()
 	if buildErr != nil {
 		return nil, fmt.Errorf("build pending lifecycle deletion registrations: %w", buildErr)
@@ -641,14 +656,18 @@ func (s LifecycleStore) SaveSubjectExecutionStep(ctx context.Context, step lifec
 	return err
 }
 
-func (s LifecycleStore) ListArchiveEntries(ctx context.Context, workspaceID, sourceTable string, limit int) ([]lifecyclemodel.ArchiveEntry, error) {
+func (s LifecycleStore) ListArchiveEntries(ctx context.Context, workspaceID, sourceTable string, limit int, filter lifecyclepersistence.DataScopeFilter) ([]lifecyclemodel.ArchiveEntry, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
 	selectBuilder := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_archive_entries", workspaceID).
 		Columns("id", "workspace_id", "owner", "source_table", "resource_id", "policy_key", "policy_version", "job_id", "payload_hash", "payload_json", "archived_at")
+	predicates := []query.Predicate{s.cleanupJobScopePredicate(workspaceID, filter)}
 	if strings.TrimSpace(sourceTable) != "" {
-		selectBuilder.Where(query.Equal("source_table", strings.TrimSpace(sourceTable)))
+		predicates = append(predicates, query.Equal("source_table", strings.TrimSpace(sourceTable)))
+	}
+	if predicate := andPredicates(predicates...); predicate != nil {
+		selectBuilder.Where(predicate)
 	}
 	queryValue, args, buildErr := selectBuilder.OrderBy(query.Descending("archived_at")).Limit(limit).Build()
 	if buildErr != nil {

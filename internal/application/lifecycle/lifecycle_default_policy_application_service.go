@@ -7,6 +7,7 @@ import (
 
 	"github.com/domainry/domainry-foundation/requestcontext"
 	lifecycleaccess "github.com/domainry/domainry-lifecycle-sdk/access"
+	lifecyclepersistence "github.com/domainry/domainry-lifecycle/internal/domain/lifecycle/repository"
 	lifecyclepolicy "github.com/domainry/domainry-lifecycle/internal/domain/lifecycle/service"
 )
 
@@ -23,7 +24,7 @@ func (s *LifecycleApplicationService) InstallDefaultPolicies(ctx context.Context
 	ctx = requestcontext.WithWorkspaceID(ctx, workspaceID)
 	return s.withinTransaction(ctx, func(transactionContext context.Context) error {
 		for _, version := range lifecyclepolicy.DefaultPolicyCatalog(workspaceID, principal.UserID, now) {
-			if _, found, err := s.policies.LatestPolicy(transactionContext, workspaceID, version.Policy.Key); err != nil {
+			if _, found, err := s.policies.LatestPolicy(transactionContext, workspaceID, version.Policy.Key, lifecyclepersistence.UnrestrictedDataScopeFilter()); err != nil {
 				return err
 			} else if found {
 				continue
