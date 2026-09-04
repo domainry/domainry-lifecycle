@@ -107,6 +107,14 @@ func TestLifecycleStorePushesScopeIntoBusinessAndRelatedResourceQueries(t *testi
 	if err := repository.SaveLegalHold(t.Context(), holdB); err != nil {
 		t.Fatal(err)
 	}
+	holds, err := repository.ListLegalHolds(t.Context(), "workspace-a", 100, ownerA)
+	if err != nil || len(holds) != 1 || holds[0].ID != "hold-a" {
+		t.Fatalf("owner legal holds=%#v err=%v", holds, err)
+	}
+	holds, err = repository.ListLegalHolds(t.Context(), "workspace-a", 1, all)
+	if err != nil || len(holds) != 1 || holds[0].ID != "hold-b" {
+		t.Fatalf("limited legal holds=%#v err=%v", holds, err)
+	}
 	unauthorized := holdB
 	endedAt := now.Add(30 * time.Minute)
 	unauthorized.EndsAt = &endedAt

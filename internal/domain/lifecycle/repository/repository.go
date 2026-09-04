@@ -76,6 +76,7 @@ type PolicyRepository interface {
 
 type LegalHoldRepository interface {
 	SaveLegalHold(context.Context, lifecyclemodel.LegalHold) error
+	ListLegalHolds(context.Context, string, int, DataScopeFilter) ([]lifecyclemodel.LegalHold, error)
 	GetLegalHold(context.Context, string, string, DataScopeFilter) (lifecyclemodel.LegalHold, bool, error)
 	UpdateLegalHold(context.Context, lifecyclemodel.LegalHold, DataScopeFilter) (bool, error)
 	ActiveLegalHolds(context.Context, lifecyclemodel.ResourceTarget, time.Time) ([]lifecyclemodel.LegalHold, error)
@@ -92,6 +93,7 @@ type CleanupJobRepository interface {
 type SubjectRequestRepository interface {
 	SaveSubjectRequest(context.Context, lifecyclemodel.SubjectRequest) error
 	GetSubjectRequest(context.Context, string, string, DataScopeFilter) (lifecyclemodel.SubjectRequest, bool, error)
+	ListSubjectRequests(context.Context, string, int, DataScopeFilter) ([]lifecyclemodel.SubjectRequest, error)
 	TransitionSubjectRequest(context.Context, lifecyclemodel.SubjectRequest, lifecyclemodel.SubjectRequest, DataScopeFilter) error
 	ExpireSubjectExportReferences(context.Context, lifecycleaccess.SystemScope, time.Time) ([]lifecyclemodel.SubjectRequest, error)
 	SaveExternalErasures(context.Context, []lifecyclemodel.ExternalErasure) error

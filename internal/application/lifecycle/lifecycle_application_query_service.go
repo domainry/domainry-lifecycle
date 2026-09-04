@@ -42,6 +42,34 @@ func (s *LifecycleApplicationService) ListArchiveEntries(ctx context.Context, so
 	return entries, err
 }
 
+func (s *LifecycleApplicationService) ListLegalHolds(ctx context.Context, limit int, principal lifecycleaccess.Principal) ([]lifecyclemodel.LegalHold, error) {
+	filter, err := lifecycleDataScope(ctx, principal, lifecyclesdk.ActionLifecycleLegalHoldsList)
+	if err != nil {
+		return nil, err
+	}
+	holds, err := s.legalHolds.ListLegalHolds(ctx, principal.WorkspaceID, limit, filter)
+	if err == nil {
+		err = s.audit(ctx, principal.WorkspaceID, "lifecycle.legal_holds.listed", principal.UserID, "", "", map[string]any{"count": len(holds)})
+	}
+	return holds, err
+}
+
+func (s *LifecycleApplicationService) ListSubjectRequests(ctx context.Context, limit int, principal lifecycleaccess.Principal) ([]lifecyclemodel.SubjectRequest, error) {
+	filter, err := lifecycleDataScope(ctx, principal, lifecyclesdk.ActionLifecycleSubjectRequestsList)
+	if err != nil {
+		return nil, err
+	}
+	return s.subjectRequests.ListSubjectRequests(ctx, principal.WorkspaceID, limit, filter)
+}
+
+func (s *LifecycleApplicationService) GetSubjectRequest(ctx context.Context, workspaceID, requestID string, principal lifecycleaccess.Principal) (lifecyclemodel.SubjectRequest, error) {
+	filter, err := lifecycleWorkspaceDataScope(ctx, principal, workspaceID, lifecyclesdk.ActionLifecycleSubjectRequestsRead)
+	if err != nil {
+		return lifecyclemodel.SubjectRequest{}, err
+	}
+	return s.subjectRequest(ctx, workspaceID, requestID, filter)
+}
+
 func (s *LifecycleApplicationService) ListExternalErasures(ctx context.Context, requestID string, principal lifecycleaccess.Principal) ([]lifecyclemodel.ExternalErasure, error) {
 	filter, err := lifecycleDataScope(ctx, principal, lifecyclesdk.ActionLifecycleExternalErasuresList)
 	if err != nil {

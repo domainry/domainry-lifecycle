@@ -35,7 +35,7 @@ func TestLifecycleSurfaceOwnsProductRoutesAndOpenAPI(t *testing.T) {
 	if err := modulehttp.ValidateAdapter(adapter); err != nil {
 		t.Fatal(err)
 	}
-	if len(adapter.Routes()) != 17 {
+	if len(adapter.Routes()) != 20 {
 		t.Fatalf("routes=%d", len(adapter.Routes()))
 	}
 	provider := adapter.(modulehttp.OpenAPIProvider)
@@ -49,6 +49,24 @@ func TestLifecycleSurfaceOwnsProductRoutesAndOpenAPI(t *testing.T) {
 		if route.Action.AuditClass == "" || route.Action.IdempotencyDecision == "" {
 			t.Fatalf("route lacks governance: %s", route.Pattern())
 		}
+	}
+}
+
+func TestSubjectResponseRedactionKeepsAuthorizedImpactEvidence(t *testing.T) {
+	request := lifecyclemodel.SubjectRequest{
+		SubjectID: "subject-1", ResolvedIdentity: "identity-1", SecondFactorRef: "mfa-1",
+		ResultReference: "artifact-1", ImpactPreview: json.RawMessage(`{"records":12}`),
+	}
+	detail := sanitizedSubject(request, true)
+	if detail.SubjectID != "" || detail.ResolvedIdentity != "" || detail.SecondFactorRef != "" || detail.ResultReference != "" {
+		t.Fatalf("sensitive subject fields were not redacted: %#v", detail)
+	}
+	if string(detail.ImpactPreview) != `{"records":12}` {
+		t.Fatalf("authorized impact evidence was removed: %s", detail.ImpactPreview)
+	}
+	listItem := sanitizedSubject(request, false)
+	if len(listItem.ImpactPreview) != 0 {
+		t.Fatalf("list response exposed impact evidence: %s", listItem.ImpactPreview)
 	}
 }
 

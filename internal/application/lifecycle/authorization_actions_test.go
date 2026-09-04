@@ -14,7 +14,7 @@ func TestAuthorizationActionsFreezeAsOneExactManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(definitions) != 21 {
+	if len(definitions) != 24 {
 		t.Fatalf("Action count=%d", len(definitions))
 	}
 	registry := actioncontract.NewRegistry()
@@ -24,7 +24,7 @@ func TestAuthorizationActionsFreezeAsOneExactManifest(t *testing.T) {
 	if err := registry.Freeze(); err != nil {
 		t.Fatal(err)
 	}
-	if permissions := registry.PermissionDefinitions(); len(permissions) != 17 {
+	if permissions := registry.PermissionDefinitions(); len(permissions) != 20 {
 		t.Fatalf("Permission count=%d", len(permissions))
 	}
 
@@ -48,7 +48,7 @@ func TestAuthorizationActionsFreezeAsOneExactManifest(t *testing.T) {
 			t.Fatalf("role Action is not exact: Action=%#v Permission=%#v", definition, permission)
 		}
 	}
-	if httpActions != 17 {
+	if httpActions != 20 {
 		t.Fatalf("HTTP role Action count=%d", httpActions)
 	}
 }

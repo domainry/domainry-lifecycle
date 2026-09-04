@@ -209,6 +209,10 @@ func (b governanceBinding) ListPolicies(ctx context.Context, principal access.Pr
 	result, err := b.service.ListPolicies(ctx, principal)
 	return convertResult[[]sdkmodel.PolicyVersion](result, err)
 }
+func (b governanceBinding) ListLegalHolds(ctx context.Context, limit int, principal access.Principal) ([]sdkmodel.LegalHold, error) {
+	result, err := b.service.ListLegalHolds(ctx, limit, principal)
+	return convertResult[[]sdkmodel.LegalHold](result, err)
+}
 func (b governanceBinding) CreateLegalHold(ctx context.Context, value sdkmodel.LegalHold, principal access.Principal) (sdkmodel.LegalHold, error) {
 	input, err := convert[internalmodel.LegalHold](value)
 	if err != nil {
@@ -251,6 +255,14 @@ func (b governanceBinding) CreateSubjectRequest(ctx context.Context, value sdkmo
 		return sdkmodel.SubjectRequest{}, err
 	}
 	result, err := b.service.CreateSubjectRequest(ctx, input, principal)
+	return convertResult[sdkmodel.SubjectRequest](result, err)
+}
+func (b governanceBinding) ListSubjectRequests(ctx context.Context, limit int, principal access.Principal) ([]sdkmodel.SubjectRequest, error) {
+	result, err := b.service.ListSubjectRequests(ctx, limit, principal)
+	return convertResult[[]sdkmodel.SubjectRequest](result, err)
+}
+func (b governanceBinding) GetSubjectRequest(ctx context.Context, workspaceID, requestID string, principal access.Principal) (sdkmodel.SubjectRequest, error) {
+	result, err := b.service.GetSubjectRequest(ctx, workspaceID, requestID, principal)
 	return convertResult[sdkmodel.SubjectRequest](result, err)
 }
 func (b governanceBinding) VerifySubjectRequest(ctx context.Context, workspaceID, requestID, secondFactor string, principal access.Principal) (sdkmodel.SubjectRequest, error) {
@@ -361,6 +373,8 @@ func adaptError(err error) error {
 		status, code = 404, "lifecycle.not_found"
 	case strings.Contains(message, "unavailable"):
 		status, code = 503, "lifecycle.unavailable"
+	case strings.Contains(message, "independent approval"):
+		status, code = 409, "lifecycle.subject_request.independent_approval_required"
 	case strings.Contains(message, "transition") || strings.Contains(message, "lease is still active") || strings.Contains(message, "blocked"):
 		status, code = 409, "lifecycle.conflict"
 	case strings.Contains(message, "required") || strings.Contains(message, "unsupported") || strings.Contains(message, "invalid") || strings.Contains(message, "cannot") || strings.Contains(message, "must"):

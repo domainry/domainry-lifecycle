@@ -222,7 +222,7 @@ func TestBindingOwnsApplicationPersistenceAndHostTransaction(t *testing.T) {
 		t.Fatal("Lifecycle business capabilities were not exposed after owner binding")
 	}
 	provider, ok := binding.(modulehttp.Provider)
-	if !ok || len(provider.HTTPAdapters()) != 1 || len(provider.HTTPAdapters()[0].Routes()) != 17 {
+	if !ok || len(provider.HTTPAdapters()) != 1 || len(provider.HTTPAdapters()[0].Routes()) != 20 {
 		t.Fatalf("Lifecycle HTTP adapters=%#v", provider)
 	}
 	if err := modulehttp.ValidateAdapter(provider.HTTPAdapters()[0]); err != nil {
@@ -233,7 +233,7 @@ func TestBindingOwnsApplicationPersistenceAndHostTransaction(t *testing.T) {
 		t.Fatal("Lifecycle binding does not expose its complete Action manifest")
 	}
 	actions, err := actionProvider.AuthorizationActions()
-	if err != nil || len(actions) != 21 {
+	if err != nil || len(actions) != 24 {
 		t.Fatalf("Lifecycle Actions=%d err=%v", len(actions), err)
 	}
 	principal := lifecycleaccess.Principal{Known: true, WorkspaceID: "workspace-a", UserID: "admin", Permissions: map[string]struct{}{
@@ -365,6 +365,16 @@ func TestModuleSubjectExportBusinessContractEndToEnd(t *testing.T) {
 	}
 	if created.Status != lifecyclemodel.SubjectRequestPendingVerification || created.ID == "" || created.RequestedBy != "requester" {
 		t.Fatalf("created subject request=%#v", created)
+	}
+	listPrincipal := principalFor("reviewer", lifecyclesdk.ActionLifecycleSubjectRequestsList)
+	listed, err := governance.ListSubjectRequests(integrationIdentityContext(t.Context(), listPrincipal, identitysdk.DataScopeAll), 10, listPrincipal)
+	if err != nil || len(listed) != 1 || listed[0].ID != created.ID {
+		t.Fatalf("listed subject requests=%#v err=%v", listed, err)
+	}
+	readPrincipal := principalFor("reviewer", lifecyclesdk.ActionLifecycleSubjectRequestsRead)
+	read, err := governance.GetSubjectRequest(integrationIdentityContext(t.Context(), readPrincipal, identitysdk.DataScopeAll), "workspace-a", created.ID, readPrincipal)
+	if err != nil || read.ID != created.ID || read.SubjectID != "subject-1" {
+		t.Fatalf("read subject request=%#v err=%v", read, err)
 	}
 
 	if _, err := governance.VerifySubjectRequest(integrationIdentityContext(t.Context(), createPrincipal, identitysdk.DataScopeOwner), "workspace-a", created.ID, "mfa-1", createPrincipal); err == nil || !strings.Contains(err.Error(), "auth.permission_denied") {

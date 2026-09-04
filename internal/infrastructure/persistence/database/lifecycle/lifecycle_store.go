@@ -123,6 +123,38 @@ func (s LifecycleStore) SaveLegalHold(ctx context.Context, hold lifecyclemodel.L
 	return nil
 }
 
+func (s LifecycleStore) ListLegalHolds(ctx context.Context, workspaceID string, limit int, filter lifecyclepersistence.DataScopeFilter) ([]lifecyclemodel.LegalHold, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	builder := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_legal_holds", workspaceID).Columns("payload_json")
+	if predicate := dataScopePredicate(filter, "created_by", "owner_org_id"); predicate != nil {
+		builder.Where(predicate)
+	}
+	queryValue, args, buildErr := builder.OrderBy(query.Descending("starts_at"), query.Descending("id")).Limit(limit).Build()
+	if buildErr != nil {
+		return nil, fmt.Errorf("build lifecycle legal hold list: %w", buildErr)
+	}
+	rows, err := s.database(ctx).QueryContext(ctx, queryValue, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	holds := []lifecyclemodel.LegalHold{}
+	for rows.Next() {
+		var payload string
+		if err := rows.Scan(&payload); err != nil {
+			return nil, err
+		}
+		var hold lifecyclemodel.LegalHold
+		if err := json.Unmarshal([]byte(payload), &hold); err != nil {
+			return nil, err
+		}
+		holds = append(holds, hold)
+	}
+	return holds, rows.Err()
+}
+
 func (s LifecycleStore) GetLegalHold(ctx context.Context, workspaceID, holdID string, filter lifecyclepersistence.DataScopeFilter) (lifecyclemodel.LegalHold, bool, error) {
 	queryValue, args, buildErr := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_legal_holds", workspaceID).Columns("payload_json").Where(andPredicates(query.Equal("id", holdID), dataScopePredicate(filter, "created_by", "owner_org_id"))).Build()
 	if buildErr != nil {
@@ -399,6 +431,38 @@ func (s LifecycleStore) GetSubjectRequest(ctx context.Context, workspaceID, id s
 		return lifecyclemodel.SubjectRequest{}, false, err
 	}
 	return request, true, nil
+}
+
+func (s LifecycleStore) ListSubjectRequests(ctx context.Context, workspaceID string, limit int, filter lifecyclepersistence.DataScopeFilter) ([]lifecyclemodel.SubjectRequest, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	builder := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_subject_requests", workspaceID).Columns("payload_json")
+	if predicate := dataScopePredicate(filter, "requested_by", "owner_org_id"); predicate != nil {
+		builder.Where(predicate)
+	}
+	queryValue, args, buildErr := builder.OrderBy(query.Descending("updated_at")).Limit(limit).Build()
+	if buildErr != nil {
+		return nil, fmt.Errorf("build lifecycle subject request list: %w", buildErr)
+	}
+	rows, err := s.database(ctx).QueryContext(ctx, queryValue, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	requests := []lifecyclemodel.SubjectRequest{}
+	for rows.Next() {
+		var payload string
+		if err := rows.Scan(&payload); err != nil {
+			return nil, err
+		}
+		var request lifecyclemodel.SubjectRequest
+		if err := json.Unmarshal([]byte(payload), &request); err != nil {
+			return nil, err
+		}
+		requests = append(requests, request)
+	}
+	return requests, rows.Err()
 }
 
 func (s LifecycleStore) ExpireSubjectExportReferences(ctx context.Context, scope lifecycleaccess.SystemScope, now time.Time) ([]lifecyclemodel.SubjectRequest, error) {

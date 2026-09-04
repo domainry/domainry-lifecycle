@@ -23,6 +23,7 @@ func (h *lifecycleHTTPHandler) handlers() map[string]http.HandlerFunc {
 	return map[string]http.HandlerFunc{
 		lifecyclesdk.ActionLifecyclePoliciesList:              h.policies,
 		lifecyclesdk.ActionLifecyclePoliciesPublish:           h.publishPolicy,
+		lifecyclesdk.ActionLifecycleLegalHoldsList:            h.legalHolds,
 		lifecyclesdk.ActionLifecycleLegalHoldsCreate:          h.createLegalHold,
 		lifecyclesdk.ActionLifecycleLegalHoldsEnd:             h.endLegalHold,
 		lifecyclesdk.ActionLifecycleCleanupPreview:            h.cleanupPreview,
@@ -30,6 +31,8 @@ func (h *lifecycleHTTPHandler) handlers() map[string]http.HandlerFunc {
 		lifecyclesdk.ActionLifecycleMetricsRead:               h.metrics,
 		lifecyclesdk.ActionLifecycleArchiveList:               h.archiveEntries,
 		lifecyclesdk.ActionLifecycleSubjectRequestsCreate:     h.createSubjectRequest,
+		lifecyclesdk.ActionLifecycleSubjectRequestsList:       h.subjectRequests,
+		lifecyclesdk.ActionLifecycleSubjectRequestsRead:       h.subjectRequest,
 		lifecyclesdk.ActionLifecycleSubjectRequestsVerify:     h.verifySubjectRequest,
 		lifecyclesdk.ActionLifecycleSubjectRequestsPreview:    h.previewSubjectRequest,
 		lifecyclesdk.ActionLifecycleSubjectRequestsApprove:    h.approveSubjectRequest,
@@ -106,6 +109,12 @@ func (h *lifecycleHTTPHandler) createLegalHold(w http.ResponseWriter, r *http.Re
 	writeResult(w, result, err, http.StatusCreated)
 }
 
+func (h *lifecycleHTTPHandler) legalHolds(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	items, err := h.governance.ListLegalHolds(r.Context(), limit, lifecyclePrincipal(r, lifecyclesdk.ActionLifecycleLegalHoldsList))
+	writeResult(w, map[string]any{"items": items, "count": len(items)}, err, http.StatusOK)
+}
+
 func (h *lifecycleHTTPHandler) endLegalHold(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Authority string    `json:"authority"`
@@ -161,6 +170,29 @@ func (h *lifecycleHTTPHandler) createSubjectRequest(w http.ResponseWriter, r *ht
 		SubjectID: input.SubjectID, Reason: input.Reason,
 	}, principal)
 	writeSubject(w, result, err, http.StatusAccepted)
+}
+
+func (h *lifecycleHTTPHandler) subjectRequests(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	items, err := h.governance.ListSubjectRequests(r.Context(), limit, lifecyclePrincipal(r, lifecyclesdk.ActionLifecycleSubjectRequestsList))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	for index := range items {
+		items[index] = sanitizedSubject(items[index], false)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "count": len(items)})
+}
+
+func (h *lifecycleHTTPHandler) subjectRequest(w http.ResponseWriter, r *http.Request) {
+	principal := lifecyclePrincipal(r, lifecyclesdk.ActionLifecycleSubjectRequestsRead)
+	result, err := h.governance.GetSubjectRequest(r.Context(), principal.WorkspaceID, strings.TrimSpace(r.PathValue("requestID")), principal)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, sanitizedSubject(result, true))
 }
 
 func (h *lifecycleHTTPHandler) verifySubjectRequest(w http.ResponseWriter, r *http.Request) {
@@ -236,9 +268,15 @@ func writeSubject(w http.ResponseWriter, result lifecyclemodel.SubjectRequest, e
 		writeError(w, err)
 		return
 	}
+	writeJSON(w, status, sanitizedSubject(result, true))
+}
+
+func sanitizedSubject(result lifecyclemodel.SubjectRequest, includeImpact bool) lifecyclemodel.SubjectRequest {
 	result.SubjectID, result.ResolvedIdentity, result.SecondFactorRef, result.ResultReference = "", "", "", ""
-	result.ImpactPreview = nil
-	writeJSON(w, status, result)
+	if !includeImpact {
+		result.ImpactPreview = nil
+	}
+	return result
 }
 
 func writeResult(w http.ResponseWriter, result any, err error, status int) {

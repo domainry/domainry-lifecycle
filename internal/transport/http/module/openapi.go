@@ -46,6 +46,8 @@ func lifecycleOpenAPIOperationsByAction() map[string]map[string]any {
 	}
 	add(lifecyclesdk.ActionLifecyclePoliciesList, "listLifecyclePolicies", "List retention policy versions", "200", nil)
 	add(lifecyclesdk.ActionLifecyclePoliciesPublish, "publishLifecyclePolicy", "Publish a retention policy version", "201", publishPolicyRequest{})
+	add(lifecyclesdk.ActionLifecycleLegalHoldsList, "listLifecycleLegalHolds", "List legal holds", "200", nil,
+		query("limit", false, map[string]any{"type": "integer", "minimum": 1, "maximum": 1000}))
 	add(lifecyclesdk.ActionLifecycleLegalHoldsCreate, "createLifecycleLegalHold", "Create a legal hold", "201", createLegalHoldRequest{})
 	add(lifecyclesdk.ActionLifecycleLegalHoldsEnd, "endLifecycleLegalHold", "End a legal hold with evidence", "200", struct {
 		Authority string    `json:"authority"`
@@ -58,6 +60,9 @@ func lifecycleOpenAPIOperationsByAction() map[string]map[string]any {
 	add(lifecyclesdk.ActionLifecycleArchiveList, "listLifecycleArchive", "List sanitized archive evidence", "200", nil,
 		query("source_table", false, map[string]any{"type": "string"}), query("limit", false, map[string]any{"type": "integer", "minimum": 1}))
 	add(lifecyclesdk.ActionLifecycleSubjectRequestsCreate, "createLifecycleSubjectRequest", "Create a governed subject request", "202", createSubjectRequest{})
+	add(lifecyclesdk.ActionLifecycleSubjectRequestsList, "listLifecycleSubjectRequests", "List sanitized subject requests", "200", nil,
+		query("limit", false, map[string]any{"type": "integer", "minimum": 1, "maximum": 1000}))
+	add(lifecyclesdk.ActionLifecycleSubjectRequestsRead, "getLifecycleSubjectRequest", "Read a sanitized subject request and its authorized impact preview", "200", nil, path("requestID"))
 	add(lifecyclesdk.ActionLifecycleSubjectRequestsVerify, "verifyLifecycleSubjectRequest", "Verify a subject request", "200", struct {
 		SecondFactorRef string `json:"second_factor_ref"`
 	}{}, path("requestID"))
