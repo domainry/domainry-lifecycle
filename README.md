@@ -3,7 +3,7 @@
 Reusable, in-process data-lifecycle governance for Domainry hosts.
 
 Lifecycle owns its domain policy, application use cases, `_lifecycle_*` tables,
-module HTTP product surface, and local maintenance tick. It borrows the host
+module HTTP product adapter, and local maintenance tick. It borrows the host
 database, SQL dialect renderer, transaction boundary, migration lock, identity
 middleware, listeners, and the single `_schema_migrations` ledger. It never
 opens a database or starts another server.
@@ -21,8 +21,8 @@ can resume without rerunning owners that already completed.
 
 ## HTTP ownership
 
-The embedded module contributes 17 authenticated tenant-admin/operations routes
-through `modulehttp.Surface`, including policy, legal-hold, cleanup creation and
+The embedded module contributes 17 authenticated management/operations routes
+through `modulehttp.Adapter`, including policy, legal-hold, cleanup creation and
 preview, metrics, archive evidence, subject requests, external-erasure
 reconciliation, and deletion replay. Lifecycle owns their request DTOs,
 redaction, permissions, governance metadata, and OpenAPI operations.
@@ -41,7 +41,7 @@ artifact cleanup, and other internal maintenance state remain system-scoped.
 The host still owns authentication/listener mounting and common transport
 governance. A Runtime host may additionally own orchestration endpoints that
 span Runtime infrastructure. In domainry-runtime, only
-`POST /operations/lifecycle/cleanup/jobs/{jobID}/run` stays Runtime-owned because
+`POST /lifecycle/cleanup/jobs/{jobID}/run` stays Runtime-owned because
 it creates/replays a durable Operations receipt before invoking Lifecycle.
 
 ## Source layout
@@ -52,7 +52,7 @@ it creates/replays a durable Operations receipt before invoking Lifecycle.
   evidence, transactions, workers, and crash recovery.
 - `internal/adapter/lifecyclesdk` converts between internal values and the
   stable public SDK contracts.
-- `internal/transport/http/module` owns the embedded product HTTP surface and
+- `internal/transport/http/module` owns the embedded product HTTP adapter and
   OpenAPI operations.
 - `internal/infrastructure/persistence` owns ORM-backed storage, artifacts,
   schema, and host-registered migrations.

@@ -28,23 +28,23 @@ func (s *surfaceGovernanceStub) PublishPolicy(_ context.Context, policy lifecycl
 }
 
 func TestLifecycleSurfaceOwnsProductRoutesAndOpenAPI(t *testing.T) {
-	surface, err := NewSurface(&surfaceGovernanceStub{})
+	adapter, err := NewAdapter(&surfaceGovernanceStub{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := modulehttp.ValidateSurface(surface); err != nil {
+	if err := modulehttp.ValidateAdapter(adapter); err != nil {
 		t.Fatal(err)
 	}
-	if len(surface.Routes()) != 17 {
-		t.Fatalf("routes=%d", len(surface.Routes()))
+	if len(adapter.Routes()) != 17 {
+		t.Fatalf("routes=%d", len(adapter.Routes()))
 	}
-	provider := surface.(modulehttp.OpenAPIProvider)
-	if len(provider.OpenAPIOperations()) != len(surface.Routes()) {
-		t.Fatalf("OpenAPI operations=%d routes=%d", len(provider.OpenAPIOperations()), len(surface.Routes()))
+	provider := adapter.(modulehttp.OpenAPIProvider)
+	if len(provider.OpenAPIOperations()) != len(adapter.Routes()) {
+		t.Fatalf("OpenAPI operations=%d routes=%d", len(provider.OpenAPIOperations()), len(adapter.Routes()))
 	}
-	for _, route := range surface.Routes() {
-		if route.Pattern() == "POST /operations/lifecycle/cleanup/jobs/{jobID}/run" {
-			t.Fatal("Runtime-owned durable cleanup execution leaked into module Surface")
+	for _, route := range adapter.Routes() {
+		if route.Pattern() == "POST /lifecycle/cleanup/jobs/{jobID}/run" {
+			t.Fatal("Runtime-owned durable cleanup execution leaked into module Adapter")
 		}
 		if route.Action.AuditClass == "" || route.Action.IdempotencyDecision == "" {
 			t.Fatalf("route lacks governance: %s", route.Pattern())
@@ -54,11 +54,11 @@ func TestLifecycleSurfaceOwnsProductRoutesAndOpenAPI(t *testing.T) {
 
 func TestLifecycleSurfaceIgnoresServerOwnedPolicyFields(t *testing.T) {
 	governance := &surfaceGovernanceStub{}
-	surface, err := NewSurface(governance)
+	adapter, err := NewAdapter(governance)
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPost, "/operations/lifecycle/policies", strings.NewReader(`{"policy":{"key":"records","version":"1","owner":"record"},"revision":2}`))
+	request := httptest.NewRequest(http.MethodPost, "/lifecycle/policies", strings.NewReader(`{"policy":{"key":"records","version":"1","owner":"record"},"revision":2}`))
 	request = request.WithContext(identitysdk.WithRequestIdentity(request.Context(), identitysdk.RequestIdentity{Principal: identitysdk.Principal{
 		Known: true, WorkspaceID: "workspace-a", UserID: "operator-a",
 		AccessBundle: &identitysdk.AccessBundle{
@@ -74,7 +74,7 @@ func TestLifecycleSurfaceIgnoresServerOwnedPolicyFields(t *testing.T) {
 		},
 	}}))
 	response := httptest.NewRecorder()
-	surface.Handler().ServeHTTP(response, request)
+	adapter.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -90,8 +90,8 @@ func TestLifecycleSurfaceIgnoresServerOwnedPolicyFields(t *testing.T) {
 	}
 
 	invalid := httptest.NewRecorder()
-	badRequest := httptest.NewRequest(http.MethodPost, "/operations/lifecycle/policies", strings.NewReader(`{"policy":{},"published_by":"client"}`))
-	surface.Handler().ServeHTTP(invalid, badRequest)
+	badRequest := httptest.NewRequest(http.MethodPost, "/lifecycle/policies", strings.NewReader(`{"policy":{},"published_by":"client"}`))
+	adapter.Handler().ServeHTTP(invalid, badRequest)
 	if invalid.Code != http.StatusBadRequest {
 		t.Fatalf("server-owned field accepted: status=%d body=%s", invalid.Code, invalid.Body.String())
 	}

@@ -1,0 +1,83 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: domainry-lifecycle
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: domainry-lifecycle
+
+      # These source contracts are newer than their latest tags. Pin their
+      # exact revisions so split-repository CI is reproducible until the next
+      # coordinated Foundation and SDK releases.
+      - uses: actions/checkout@v4
+        with:
+          repository: domainry/domainry-foundation
+          ref: ddc3e594ee393dd91c91ad466cfec3dcf3d4d960
+          path: domainry-foundation
+      - uses: actions/checkout@v4
+        with:
+          repository: domainry/domainry-identity-sdk
+          ref: 51348ff00e2fbef482af6346baef04ed32b7de61
+          path: domainry-identity-sdk
+      - uses: actions/checkout@v4
+        with:
+          repository: domainry/domainry-lifecycle-sdk
+          ref: 792ec43996bcfd6f8734a4335992ba026a4a67ba
+          path: domainry-lifecycle-sdk
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.6"
+          cache: true
+          cache-dependency-path: |
+            domainry-lifecycle/go.sum
+            domainry-foundation/go.sum
+            domainry-identity-sdk/go.sum
+            domainry-lifecycle-sdk/go.sum
+
+      - name: Assemble pinned split-repository workspace
+        working-directory: ${{ github.workspace }}
+        run: |
+          go work init ./domainry-lifecycle ./domainry-foundation ./domainry-identity-sdk ./domainry-lifecycle-sdk
+          echo "GOWORK=$GITHUB_WORKSPACE/go.work" >> "$GITHUB_ENV"
+
+      - name: Check Go formatting
+        run: |
+          unformatted="$(find . -name '*.go' -not -path './.git/*' -print0 | xargs -0 gofmt -l)"
+          if [ -n "$unformatted" ]; then
+            printf 'gofmt required:\n%s\n' "$unformatted"
+            exit 1
+          fi
+
+      - name: Test Go packages
+        run: go test ./...
+
+      - name: SQLite host-contract integration gate
+        run: >-
+          go test
+          ./module
+          ./internal/infrastructure/persistence/database/lifecycle
+          -run '^(TestModuleSubjectExportBusinessContractEndToEnd|TestModuleMutationRollsBackOnHostTransactionFailure|TestLifecycleStorePersistsOwnedAggregate|TestLifecycleStorePushesScopeIntoBusinessAndRelatedResourceQueries)$'
+          -count=1
+          -v
+
+      - name: Race-check lifecycle state and persistence boundaries
+        run: >-
+          go test -race
+          ./module
+          ./internal/application/lifecycle
+          ./internal/infrastructure/persistence/database/lifecycle
+
+      - run: go vet ./...

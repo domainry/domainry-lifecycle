@@ -31,7 +31,7 @@ type Binding struct {
 	host       modulehost.Host
 	service    *lifecycleapplication.LifecycleApplicationService
 	workers    *lifecycleapplication.WorkerRunner
-	surfaces   []modulehttp.Surface
+	adapters   []modulehttp.Adapter
 	capability modulecapability.Binding
 	bound      bool
 }
@@ -107,24 +107,24 @@ func (b *Binding) BindOwners(ctx context.Context, extensions sdk.OwnerExtensions
 		SubjectHandlers: subjectHandlers, ExternalErasure: extensions.ExternalErasure,
 		Artifacts: extensions.Artifacts, UploadArtifacts: extensions.UploadArtifacts, Transactions: b.host.Transactions(),
 	})
-	surface, err := modulehttptransport.NewSurface(governanceBinding{service: service})
+	adapter, err := modulehttptransport.NewAdapter(governanceBinding{service: service})
 	if err != nil {
-		return &sdk.Error{StatusCode: 500, Code: "lifecycle.http_surface_invalid", Cause: err}
+		return &sdk.Error{StatusCode: 500, Code: "lifecycle.http_adapter_invalid", Cause: err}
 	}
 	b.service = service
 	b.workers = lifecycleapplication.NewWorkerRunner(service)
-	b.surfaces = []modulehttp.Surface{surface}
+	b.adapters = []modulehttp.Adapter{adapter}
 	b.bound = true
 	return nil
 }
 
-func (b *Binding) HTTPSurfaces() []modulehttp.Surface {
+func (b *Binding) HTTPAdapters() []modulehttp.Adapter {
 	if b == nil {
 		return nil
 	}
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	return append([]modulehttp.Surface(nil), b.surfaces...)
+	return append([]modulehttp.Adapter(nil), b.adapters...)
 }
 
 func (*Binding) AuthorizationActions() ([]actioncontract.ActionDefinition, error) {

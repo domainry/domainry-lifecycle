@@ -12,25 +12,25 @@ import (
 	lifecycleapplication "github.com/domainry/domainry-lifecycle/internal/application/lifecycle"
 )
 
-type lifecycleHTTPSurface struct {
+type lifecycleHTTPAdapter struct {
 	handler    http.Handler
 	routes     []modulehttp.Route
 	operations map[string]map[string]any
 }
 
-func (*lifecycleHTTPSurface) ContractVersion() string { return modulehttp.ContractVersion }
-func (*lifecycleHTTPSurface) Owner() string           { return "lifecycle" }
-func (*lifecycleHTTPSurface) Name() string            { return "lifecycle_governance" }
-func (s *lifecycleHTTPSurface) Handler() http.Handler { return s.handler }
-func (s *lifecycleHTTPSurface) Routes() []modulehttp.Route {
+func (*lifecycleHTTPAdapter) ContractVersion() string { return modulehttp.ContractVersion }
+func (*lifecycleHTTPAdapter) Owner() string           { return "lifecycle" }
+func (*lifecycleHTTPAdapter) Name() string            { return "lifecycle_governance" }
+func (s *lifecycleHTTPAdapter) Handler() http.Handler { return s.handler }
+func (s *lifecycleHTTPAdapter) Routes() []modulehttp.Route {
 	return append([]modulehttp.Route(nil), s.routes...)
 }
 
-func (s *lifecycleHTTPSurface) OpenAPIOperations() map[string]map[string]any {
+func (s *lifecycleHTTPAdapter) OpenAPIOperations() map[string]map[string]any {
 	return s.operations
 }
 
-func NewSurface(governance lifecyclesdk.Governance) (modulehttp.Surface, error) {
+func NewAdapter(governance lifecyclesdk.Governance) (modulehttp.Adapter, error) {
 	if governance == nil {
 		return nil, errors.New("Lifecycle module HTTP governance is unavailable")
 	}
@@ -68,7 +68,7 @@ func NewSurface(governance lifecyclesdk.Governance) (modulehttp.Surface, error) 
 		sort.Strings(keys)
 		return nil, fmt.Errorf("Lifecycle implementations have no Action manifest entries: %v", keys)
 	}
-	return &lifecycleHTTPSurface{handler: handler.mux, routes: routes, operations: operations}, nil
+	return &lifecycleHTTPAdapter{handler: handler.mux, routes: routes, operations: operations}, nil
 }
 
 func lifecycleRoutes() ([]modulehttp.Route, error) {
@@ -90,5 +90,5 @@ func lifecycleRoutes() ([]modulehttp.Route, error) {
 	return routes, nil
 }
 
-var _ modulehttp.Surface = (*lifecycleHTTPSurface)(nil)
-var _ modulehttp.OpenAPIProvider = (*lifecycleHTTPSurface)(nil)
+var _ modulehttp.Adapter = (*lifecycleHTTPAdapter)(nil)
+var _ modulehttp.OpenAPIProvider = (*lifecycleHTTPAdapter)(nil)
