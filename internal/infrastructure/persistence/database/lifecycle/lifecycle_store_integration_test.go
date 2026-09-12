@@ -86,7 +86,7 @@ func TestUploadRegistrationIsIdentityIdempotentAndNeverResetsTerminalScan(t *tes
 	}
 	conflict := artifact
 	conflict.SHA256 = "bbb"
-	if err := store.RegisterUpload(t.Context(), conflict); !errors.Is(err, lifecyclecontract.ErrUploadArtifactIdentityConflict) {
+	if err := store.RegisterUpload(t.Context(), conflict); !errors.Is(err, errUploadArtifactIdentityConflict) {
 		t.Fatalf("expected identity conflict, got %v", err)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,6 +20,8 @@ import (
 )
 
 const uploadArtifactGracePeriod = 24 * time.Hour
+
+var errUploadArtifactIdentityConflict = errors.New("lifecycle upload artifact identity conflict")
 
 type FileArtifactStore struct {
 	host       modulehost.Host
@@ -86,12 +89,12 @@ func (s *FileArtifactStore) RegisterUpload(ctx context.Context, artifact lifecyc
 		if sameUploadArtifactIdentity(existing, artifact) {
 			return nil
 		}
-		return lifecyclecontract.ErrUploadArtifactIdentityConflict
+		return errUploadArtifactIdentityConflict
 	}
 	if _, found, lookupErr := s.findRegisteredUpload(ctx, artifact.WorkspaceID, "filename", artifact.Filename); lookupErr != nil {
 		return lookupErr
 	} else if found {
-		return lifecyclecontract.ErrUploadArtifactIdentityConflict
+		return errUploadArtifactIdentityConflict
 	}
 	createdAt := artifact.CreatedAt.UTC().Format(time.RFC3339Nano)
 	queryValue, args, buildErr := query.NewWorkspaceInsertBuilder(s.renderer, "_lifecycle_file_artifacts", artifact.WorkspaceID).
@@ -108,10 +111,10 @@ func (s *FileArtifactStore) RegisterUpload(ctx context.Context, artifact lifecyc
 		if sameUploadArtifactIdentity(existing, artifact) {
 			return nil
 		}
-		return lifecyclecontract.ErrUploadArtifactIdentityConflict
+		return errUploadArtifactIdentityConflict
 	}
 	if _, found, lookupErr := s.findRegisteredUpload(ctx, artifact.WorkspaceID, "filename", artifact.Filename); lookupErr == nil && found {
-		return lifecyclecontract.ErrUploadArtifactIdentityConflict
+		return errUploadArtifactIdentityConflict
 	}
 	return err
 }
