@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	lifecycleaccess "github.com/domainry/domainry-lifecycle-sdk/access"
+	lifecyclecontract "github.com/domainry/domainry-lifecycle-sdk/contract"
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
 	lifecyclemodel "github.com/domainry/domainry-lifecycle/internal/domain/lifecycle/model"
 	lifecyclepersistence "github.com/domainry/domainry-lifecycle/internal/domain/lifecycle/repository"
@@ -14,6 +16,48 @@ import (
 	ormdialect "github.com/domainry/domainry-orm/dialect"
 	_ "modernc.org/sqlite"
 )
+
+type persistenceUploadFields struct{}
+
+func (persistenceUploadFields) HasUploadField(string, string) bool { return true }
+
+func TestFileScanQueueSurvivesRestartAndTerminalEvidenceIsImmutable(t *testing.T) {
+	repository, _ := newPersistenceTestStore(t)
+	store := NewFileArtifactStore(repository.host, persistenceUploadFields{}, t.TempDir())
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	for _, artifact := range []lifecyclecontract.UploadArtifact{
+		{ID: "file-b", WorkspaceID: "workspace-b", ObjectKey: "document", FieldKey: "file", Filename: "b.png", ContentType: "image/png", SHA256: "bbb", Size: 20, CreatedAt: now.Add(time.Second)},
+		{ID: "file-a", WorkspaceID: "workspace-a", ObjectKey: "document", FieldKey: "file", Filename: "a.png", ContentType: "image/png", SHA256: "aaa", Size: 10, CreatedAt: now},
+	} {
+		if err := store.RegisterUpload(t.Context(), artifact); err != nil {
+			t.Fatal(err)
+		}
+	}
+	scope := lifecycleaccess.NewSystemScope(lifecycleaccess.SystemScopeGlobal, "scan pending uploads")
+	pending, err := store.PendingFileScans(t.Context(), scope, 25)
+	if err != nil || len(pending) != 2 || pending[0].FileID != "file-a" || pending[1].FileID != "file-b" {
+		t.Fatalf("pending=%#v err=%v", pending, err)
+	}
+	clean := pending[0]
+	clean.Status, clean.Provider, clean.EvidenceRef, clean.ScannedAt = lifecyclecontract.FileScanClean, "scanner-v1", "sha256:aaa", now.Add(time.Minute)
+	if err := store.RecordFileScan(t.Context(), clean); err != nil {
+		t.Fatal(err)
+	}
+	// A restarted worker may replay the same deterministic terminal result.
+	clean.ScannedAt = now.Add(2 * time.Minute)
+	if err := store.RecordFileScan(t.Context(), clean); err != nil {
+		t.Fatalf("same terminal replay failed: %v", err)
+	}
+	conflict := clean
+	conflict.Status, conflict.EvidenceRef = lifecyclecontract.FileScanQuarantined, "sha256:different"
+	if err := store.RecordFileScan(t.Context(), conflict); err == nil {
+		t.Fatal("conflicting terminal scan evidence replaced the committed result")
+	}
+	pending, err = store.PendingFileScans(t.Context(), scope, 25)
+	if err != nil || len(pending) != 1 || pending[0].FileID != "file-b" {
+		t.Fatalf("remaining pending=%#v err=%v", pending, err)
+	}
+}
 
 type persistenceTestHost struct {
 	db      *sql.DB

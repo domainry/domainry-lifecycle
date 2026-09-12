@@ -139,6 +139,40 @@ func (s *FileArtifactStore) FindFileScan(ctx context.Context, workspaceID, fileI
 	return evidence, err
 }
 
+func (s *FileArtifactStore) PendingFileScans(ctx context.Context, scope lifecycleaccess.SystemScope, limit int) ([]lifecyclecontract.FileScanEvidence, error) {
+	if s == nil || s.host == nil || s.db == nil || s.renderer == nil {
+		return nil, fmt.Errorf("upload artifact store unavailable")
+	}
+	if _, err := lifecycleaccess.NewSystemQueryScope(scope); err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
+	columns := []string{"id", "workspace_id", "filename", "content_type", "object_key", "field_key", "sha256", "size_bytes", "scan_status", "scan_provider", "scan_evidence_ref", "scanned_at"}
+	queryValue, args, buildErr := query.NewSelectBuilder(s.renderer, "_lifecycle_file_artifacts").Columns(columns...).
+		Where(query.And(query.Equal("scan_status", lifecyclecontract.FileScanPending), query.Equal("deleted_at", ""))).
+		OrderBy(query.Ascending("created_at"), query.Ascending("id")).Limit(limit).Build()
+	if buildErr != nil {
+		return nil, fmt.Errorf("build pending file scan query: %w", buildErr)
+	}
+	rows, err := s.database(ctx).QueryContext(ctx, queryValue, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]lifecyclecontract.FileScanEvidence, 0, limit)
+	for rows.Next() {
+		var evidence lifecyclecontract.FileScanEvidence
+		var scannedAt string
+		if err := rows.Scan(&evidence.FileID, &evidence.WorkspaceID, &evidence.Filename, &evidence.ContentType, &evidence.ObjectKey, &evidence.FieldKey, &evidence.SHA256, &evidence.Size, &evidence.Status, &evidence.Provider, &evidence.EvidenceRef, &scannedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, evidence)
+	}
+	return result, rows.Err()
+}
+
 func (s *FileArtifactStore) RecordFileScan(ctx context.Context, evidence lifecyclecontract.FileScanEvidence) error {
 	switch evidence.Status {
 	case lifecyclecontract.FileScanClean, lifecyclecontract.FileScanQuarantined, lifecyclecontract.FileScanFailed:
@@ -155,9 +189,15 @@ func (s *FileArtifactStore) RecordFileScan(ctx context.Context, evidence lifecyc
 	if current.SHA256 != strings.TrimSpace(evidence.SHA256) || current.Size != evidence.Size {
 		return fmt.Errorf("file scan content identity mismatch")
 	}
+	if current.Status != lifecyclecontract.FileScanPending {
+		if current.Status == evidence.Status && current.Provider == strings.TrimSpace(evidence.Provider) && current.EvidenceRef == strings.TrimSpace(evidence.EvidenceRef) {
+			return nil
+		}
+		return fmt.Errorf("file scan already has terminal evidence")
+	}
 	queryValue, args, buildErr := query.NewWorkspaceUpdateBuilder(s.renderer, "_lifecycle_file_artifacts", current.WorkspaceID).
 		Set("scan_status", evidence.Status).Set("scan_provider", strings.TrimSpace(evidence.Provider)).Set("scan_evidence_ref", strings.TrimSpace(evidence.EvidenceRef)).
-		Set("scanned_at", evidence.ScannedAt.UTC().Format(time.RFC3339Nano)).Where(query.And(query.Equal("id", current.FileID), query.Equal("sha256", current.SHA256), query.Equal("size_bytes", current.Size))).Build()
+		Set("scanned_at", evidence.ScannedAt.UTC().Format(time.RFC3339Nano)).Where(query.And(query.Equal("id", current.FileID), query.Equal("sha256", current.SHA256), query.Equal("size_bytes", current.Size), query.Equal("scan_status", lifecyclecontract.FileScanPending))).Build()
 	if buildErr != nil {
 		return fmt.Errorf("build file scan update: %w", buildErr)
 	}
@@ -170,7 +210,11 @@ func (s *FileArtifactStore) RecordFileScan(ctx context.Context, evidence lifecyc
 		return err
 	}
 	if changed != 1 {
-		return fmt.Errorf("file scan content identity mismatch")
+		latest, findErr := s.FindFileScan(ctx, evidence.WorkspaceID, evidence.FileID)
+		if findErr == nil && latest.Status == evidence.Status && latest.Provider == strings.TrimSpace(evidence.Provider) && latest.EvidenceRef == strings.TrimSpace(evidence.EvidenceRef) {
+			return nil
+		}
+		return fmt.Errorf("file scan already has terminal evidence")
 	}
 	return nil
 }
