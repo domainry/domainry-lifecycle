@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -56,6 +57,37 @@ func TestFileScanQueueSurvivesRestartAndTerminalEvidenceIsImmutable(t *testing.T
 	pending, err = store.PendingFileScans(t.Context(), scope, 25)
 	if err != nil || len(pending) != 1 || pending[0].FileID != "file-b" {
 		t.Fatalf("remaining pending=%#v err=%v", pending, err)
+	}
+}
+
+func TestUploadRegistrationIsIdentityIdempotentAndNeverResetsTerminalScan(t *testing.T) {
+	repository, _ := newPersistenceTestStore(t)
+	store := NewFileArtifactStore(repository.host, persistenceUploadFields{}, t.TempDir())
+	now := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
+	artifact := lifecyclecontract.UploadArtifact{ID: "derived-1", WorkspaceID: "workspace-a", ObjectKey: "document", FieldKey: "file", Filename: "derived.pdf", ContentType: "application/pdf", SHA256: "aaa", Size: 10, CreatedAt: now}
+	if err := store.RegisterUpload(t.Context(), artifact); err != nil {
+		t.Fatal(err)
+	}
+	clean, err := store.FindFileScan(t.Context(), artifact.WorkspaceID, artifact.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clean.Status, clean.Provider, clean.EvidenceRef, clean.ScannedAt = lifecyclecontract.FileScanClean, "derived-v1", "sha256:aaa", now.Add(time.Minute)
+	if err := store.RecordFileScan(t.Context(), clean); err != nil {
+		t.Fatal(err)
+	}
+	artifact.CreatedAt = now.Add(time.Hour)
+	if err := store.RegisterUpload(t.Context(), artifact); err != nil {
+		t.Fatalf("identical retry failed: %v", err)
+	}
+	after, err := store.FindFileScan(t.Context(), artifact.WorkspaceID, artifact.ID)
+	if err != nil || after.Status != lifecyclecontract.FileScanClean || after.Provider != "derived-v1" || !after.ScannedAt.Equal(clean.ScannedAt) {
+		t.Fatalf("terminal evidence reset: after=%+v err=%v", after, err)
+	}
+	conflict := artifact
+	conflict.SHA256 = "bbb"
+	if err := store.RegisterUpload(t.Context(), conflict); !errors.Is(err, lifecyclecontract.ErrUploadArtifactIdentityConflict) {
+		t.Fatalf("expected identity conflict, got %v", err)
 	}
 }
 

@@ -80,37 +80,59 @@ func (s *FileArtifactStore) RegisterUpload(ctx context.Context, artifact lifecyc
 	if artifact.ID == "" || artifact.Filename == "" || filepath.Base(artifact.Filename) != artifact.Filename || artifact.SHA256 == "" || artifact.Size < 0 || artifact.CreatedAt.IsZero() {
 		return fmt.Errorf("upload artifact evidence is incomplete")
 	}
-	createdAt := artifact.CreatedAt.UTC().Format(time.RFC3339Nano)
-	var id string
-	queryValue, args, buildErr := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_file_artifacts", artifact.WorkspaceID).
-		Columns("id").Where(query.Equal("filename", artifact.Filename)).Build()
-	if buildErr != nil {
-		return fmt.Errorf("build upload artifact lookup: %w", buildErr)
-	}
-	err = s.database(ctx).QueryRowContext(ctx, queryValue, args...).Scan(&id)
-	if err != nil && err != sql.ErrNoRows {
-		return err
-	}
-	if err == nil {
-		queryValue, args, buildErr = query.NewWorkspaceUpdateBuilder(s.renderer, "_lifecycle_file_artifacts", artifact.WorkspaceID).
-			Set("object_key", artifact.ObjectKey).Set("field_key", artifact.FieldKey).Set("content_type", artifact.ContentType).Set("sha256", artifact.SHA256).Set("size_bytes", artifact.Size).
-			Set("status", "staged").Set("scan_status", lifecyclecontract.FileScanPending).Set("scan_provider", "").Set("scan_evidence_ref", "").Set("scanned_at", "").
-			Set("created_at", createdAt).Set("last_referenced_at", "").Set("delete_after", artifact.CreatedAt.UTC().Add(uploadArtifactGracePeriod).Format(time.RFC3339Nano)).Set("deleted_at", "").
-			Where(query.Equal("id", id)).Build()
-		if buildErr != nil {
-			return fmt.Errorf("build upload artifact update: %w", buildErr)
+	if existing, found, lookupErr := s.findRegisteredUpload(ctx, artifact.WorkspaceID, "id", artifact.ID); lookupErr != nil {
+		return lookupErr
+	} else if found {
+		if sameUploadArtifactIdentity(existing, artifact) {
+			return nil
 		}
-		_, err = s.database(ctx).ExecContext(ctx, queryValue, args...)
-		return err
+		return lifecyclecontract.ErrUploadArtifactIdentityConflict
 	}
-	queryValue, args, buildErr = query.NewWorkspaceInsertBuilder(s.renderer, "_lifecycle_file_artifacts", artifact.WorkspaceID).
+	if _, found, lookupErr := s.findRegisteredUpload(ctx, artifact.WorkspaceID, "filename", artifact.Filename); lookupErr != nil {
+		return lookupErr
+	} else if found {
+		return lifecyclecontract.ErrUploadArtifactIdentityConflict
+	}
+	createdAt := artifact.CreatedAt.UTC().Format(time.RFC3339Nano)
+	queryValue, args, buildErr := query.NewWorkspaceInsertBuilder(s.renderer, "_lifecycle_file_artifacts", artifact.WorkspaceID).
 		Columns("id", "object_key", "field_key", "filename", "content_type", "sha256", "size_bytes", "status", "scan_status", "scan_provider", "scan_evidence_ref", "scanned_at", "created_at", "last_referenced_at", "delete_after", "deleted_at").
 		Values(artifact.ID, artifact.ObjectKey, artifact.FieldKey, artifact.Filename, artifact.ContentType, artifact.SHA256, artifact.Size, "staged", lifecyclecontract.FileScanPending, "", "", "", createdAt, "", artifact.CreatedAt.UTC().Add(uploadArtifactGracePeriod).Format(time.RFC3339Nano), "").Build()
 	if buildErr != nil {
 		return fmt.Errorf("build upload artifact insert: %w", buildErr)
 	}
-	_, err = s.database(ctx).ExecContext(ctx, queryValue, args...)
+	if _, err = s.database(ctx).ExecContext(ctx, queryValue, args...); err == nil {
+		return nil
+	}
+	// Resolve concurrent identical registration into the same idempotent result.
+	if existing, found, lookupErr := s.findRegisteredUpload(ctx, artifact.WorkspaceID, "id", artifact.ID); lookupErr == nil && found {
+		if sameUploadArtifactIdentity(existing, artifact) {
+			return nil
+		}
+		return lifecyclecontract.ErrUploadArtifactIdentityConflict
+	}
+	if _, found, lookupErr := s.findRegisteredUpload(ctx, artifact.WorkspaceID, "filename", artifact.Filename); lookupErr == nil && found {
+		return lifecyclecontract.ErrUploadArtifactIdentityConflict
+	}
 	return err
+}
+
+func (s *FileArtifactStore) findRegisteredUpload(ctx context.Context, workspaceID, field, value string) (lifecyclecontract.UploadArtifact, bool, error) {
+	queryValue, args, err := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_file_artifacts", workspaceID).
+		Columns("id", "workspace_id", "object_key", "field_key", "filename", "content_type", "sha256", "size_bytes").Where(query.Equal(field, value)).Build()
+	if err != nil {
+		return lifecyclecontract.UploadArtifact{}, false, fmt.Errorf("build upload artifact lookup: %w", err)
+	}
+	var artifact lifecyclecontract.UploadArtifact
+	err = s.database(ctx).QueryRowContext(ctx, queryValue, args...).Scan(&artifact.ID, &artifact.WorkspaceID, &artifact.ObjectKey, &artifact.FieldKey, &artifact.Filename, &artifact.ContentType, &artifact.SHA256, &artifact.Size)
+	if err == sql.ErrNoRows {
+		return lifecyclecontract.UploadArtifact{}, false, nil
+	}
+	return artifact, err == nil, err
+}
+
+func sameUploadArtifactIdentity(left, right lifecyclecontract.UploadArtifact) bool {
+	return left.ID == right.ID && left.WorkspaceID == right.WorkspaceID && left.ObjectKey == right.ObjectKey && left.FieldKey == right.FieldKey && left.Filename == right.Filename &&
+		strings.EqualFold(strings.TrimSpace(left.ContentType), strings.TrimSpace(right.ContentType)) && strings.EqualFold(strings.TrimSpace(left.SHA256), strings.TrimSpace(right.SHA256)) && left.Size == right.Size
 }
 
 func (s *FileArtifactStore) FindFileScan(ctx context.Context, workspaceID, fileID string) (lifecyclecontract.FileScanEvidence, error) {
