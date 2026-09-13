@@ -5,7 +5,6 @@ package persistence
 import (
 	"github.com/domainry/domainry-lifecycle-sdk/contract"
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
-	artifactstore "github.com/domainry/domainry-lifecycle/internal/infrastructure/artifact/filesystem"
 	database "github.com/domainry/domainry-lifecycle/internal/infrastructure/persistence/database/lifecycle"
 )
 
@@ -32,8 +31,8 @@ func WithExpiredUploadReferenceCleaner(cleaner contract.ExpiredUploadReferenceCl
 	return database.WithExpiredUploadReferenceCleaner(cleaner)
 }
 
-func NewSubjectArtifactStore(root string) contract.SubjectArtifactStore {
-	return artifactstore.NewSubjectStore(root)
+func NewSubjectArtifactStore(host modulehost.Host, root string) contract.SubjectArtifactStore {
+	return database.NewSubjectArtifactStore(host, root)
 }
 
 func NewArchiveWriter(host modulehost.Host) ArchiveWriter { return database.NewArchiveWriter(host) }

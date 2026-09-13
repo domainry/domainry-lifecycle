@@ -21,7 +21,7 @@ func TestPortableSchemaRendersAllSupportedDialects(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(migrations) != 3 || len(migrations[0].Statements) != len(tables())+len(indexes()) || len(migrations[1].Statements) != len(subjectExecutionStepTables())+len(subjectExecutionStepIndexes()) || len(migrations[2].Statements) != 16 {
+			if len(migrations) != 4 || len(migrations[0].Statements) != len(tables())+len(indexes()) || len(migrations[1].Statements) != len(subjectExecutionStepTables())+len(subjectExecutionStepIndexes()) || len(migrations[2].Statements) != 16 || len(migrations[3].Statements) != 2 {
 				t.Fatalf("unexpected migration inventory: %#v", migrations)
 			}
 			joined := strings.Join(migrations[0].Statements, "\n")

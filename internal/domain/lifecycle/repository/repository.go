@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	lifecyclecontract "github.com/domainry/domainry-lifecycle-sdk/contract"
 	"sort"
 	"strings"
 	"time"
@@ -103,6 +104,20 @@ type SubjectRequestRepository interface {
 	ListPendingDeletionRegistrations(context.Context, string, int, DataScopeFilter) ([]lifecyclemodel.DeletionRegistration, error)
 	ListSubjectExecutionSteps(context.Context, string, string) ([]lifecyclemodel.SubjectExecutionStep, error)
 	SaveSubjectExecutionStep(context.Context, lifecyclemodel.SubjectExecutionStep) error
+}
+
+// SubjectErasureRepository owns the export barrier and Lifecycle's copies of
+// subject data. No orchestrator queries a different owner's tables.
+type SubjectErasureRepository interface {
+	BeginSubjectErasure(context.Context, string, string, string) ([]lifecyclemodel.SubjectExportReference, error)
+	EraseSubjectRequestData(context.Context, string, string, string) error
+	CheckSubjectExportAllowed(context.Context, string, string) error
+}
+
+type AccountErasureRepository interface {
+	SaveAccountErasureApproval(context.Context, lifecyclecontract.AccountErasureApproval) error
+	GetAccountErasureApproval(context.Context, string, string) (lifecyclecontract.AccountErasureApproval, bool, error)
+	ListRunnableAccountErasures(context.Context, int, time.Time, lifecycleaccess.SystemScope) ([]lifecyclemodel.SubjectRequest, error)
 }
 
 type LifecycleEvidenceRepository interface {

@@ -258,11 +258,11 @@ func TestBindingOwnsApplicationPersistenceAndHostTransaction(t *testing.T) {
 		t.Fatalf("audit rows=%d err=%v", auditRows, err)
 	}
 	var migrationRows int
-	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _schema_migrations").Scan(&migrationRows); err != nil || migrationRows != 3 {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _schema_migrations").Scan(&migrationRows); err != nil || migrationRows != 4 {
 		t.Fatalf("migration ledger rows=%d err=%v", migrationRows, err)
 	}
 	calls := host.registrar.snapshot()
-	if len(calls) != 1 || calls[0].owner != migration.Owner || len(calls[0].migrations) != 3 {
+	if len(calls) != 1 || calls[0].owner != migration.Owner || len(calls[0].migrations) != 4 {
 		t.Fatalf("host migration registrations=%#v", calls)
 	}
 	if err := binding.BindOwners(t.Context(), lifecyclesdk.OwnerExtensions{}); err == nil {
@@ -314,12 +314,12 @@ func TestModuleSubjectExportBusinessContractEndToEnd(t *testing.T) {
 		t.Fatalf("host migration registrations=%d", len(calls))
 	}
 	for _, call := range calls {
-		if call.owner != migration.Owner || len(call.migrations) != 3 {
+		if call.owner != migration.Owner || len(call.migrations) != 4 {
 			t.Fatalf("host migration registration=%#v", call)
 		}
 	}
 	var migrationRows, migrationLedgers int
-	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _schema_migrations").Scan(&migrationRows); err != nil || migrationRows != 3 {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _schema_migrations").Scan(&migrationRows); err != nil || migrationRows != 4 {
 		t.Fatalf("migration ledger rows=%d err=%v", migrationRows, err)
 	}
 	// SQLite's catalog is used only as dialect-focused integration evidence;
@@ -473,7 +473,7 @@ func TestModuleSubjectExportBusinessContractEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	var ownerPayloads map[string]json.RawMessage
-	if err := json.Unmarshal(payload, &ownerPayloads); err != nil || len(ownerPayloads) != 2 {
+	if err := json.Unmarshal(payload, &ownerPayloads); err != nil || len(ownerPayloads) != 3 {
 		t.Fatalf("downloaded owner payloads=%s err=%v", payload, err)
 	}
 	var persistedStatus string
@@ -489,7 +489,7 @@ func TestModuleSubjectExportBusinessContractEndToEnd(t *testing.T) {
 		t.Fatalf("persisted subject request=%#v status=%q", persisted, persistedStatus)
 	}
 	var stepRows, auditRows int
-	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _lifecycle_subject_execution_steps WHERE workspace_id = ? AND request_id = ?", "workspace-a", created.ID).Scan(&stepRows); err != nil || stepRows != 2 {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _lifecycle_subject_execution_steps WHERE workspace_id = ? AND request_id = ?", "workspace-a", created.ID).Scan(&stepRows); err != nil || stepRows != 3 {
 		t.Fatalf("execution step rows=%d err=%v", stepRows, err)
 	}
 	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _lifecycle_audit_evidence WHERE workspace_id = ? AND resource_id = ?", "workspace-a", created.ID).Scan(&auditRows); err != nil || auditRows != 9 {
@@ -610,7 +610,7 @@ func TestSubjectExecutionRetryReusesCompletedOwnerSteps(t *testing.T) {
 		t.Fatalf("retried execution request=%#v attempts=(%d,%d)", request, first.exportAttempts, second.exportAttempts)
 	}
 	var stepRows int
-	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _lifecycle_subject_execution_steps WHERE workspace_id = ? AND request_id = ?", "workspace-a", request.ID).Scan(&stepRows); err != nil || stepRows != 2 {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _lifecycle_subject_execution_steps WHERE workspace_id = ? AND request_id = ?", "workspace-a", request.ID).Scan(&stepRows); err != nil || stepRows != 3 {
 		t.Fatalf("execution step rows=%d err=%v", stepRows, err)
 	}
 }

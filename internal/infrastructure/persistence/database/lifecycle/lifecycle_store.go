@@ -388,6 +388,11 @@ func (s LifecycleStore) SaveSubjectRequest(ctx context.Context, request lifecycl
 }
 
 func (s LifecycleStore) TransitionSubjectRequest(ctx context.Context, current, next lifecyclemodel.SubjectRequest, filter lifecyclepersistence.DataScopeFilter) error {
+	if next.Kind == lifecyclemodel.SubjectRequestExport && next.ResolvedIdentity != "" {
+		if err := s.CheckSubjectExportAllowed(ctx, next.WorkspaceID, next.ResolvedIdentity); err != nil {
+			return err
+		}
+	}
 	payload, err := json.Marshal(next)
 	if err != nil {
 		return err

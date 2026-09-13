@@ -19,6 +19,24 @@ side effects receive the Lifecycle request ID as their idempotency identity.
 Lifecycle records completed owner steps in its own schema so a failed request
 can resume without rerunning owners that already completed.
 
+`AccountErasureBinding.AccountErasures()` provides trusted Action delivery.
+Runtime resolves the published profile binding, account, organization and
+approval before staging a request. Staging requires the host Action transaction
+and an independently approved request from the subject. The queue and approval
+provenance roll back with a failed business Action. An approved queue receipt
+does not mean the account has been erased.
+
+The account-erasure worker executes only committed Action approvals through the
+existing subject executor. Failed cleanup retains its saved plans and waits
+before retrying. Receipt reads match the exact workspace, organization, binding,
+object and profile. Irreversible owner/file operations cannot run inside the
+staging Action transaction.
+
+Lifecycle also participates as an erasure owner: it fences new subject exports,
+removes previous export files and execution payloads, and redacts prior subject
+request and audit payloads. Executing exports block preparation. File references
+are frozen before redaction so cleanup can recover after a file-store failure.
+
 ## HTTP ownership
 
 The embedded module contributes 17 authenticated management/operations routes

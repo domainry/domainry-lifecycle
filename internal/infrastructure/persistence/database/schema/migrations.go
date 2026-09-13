@@ -38,7 +38,14 @@ func Migrations(renderer modulehost.Dialect) ([]modulehost.SchemaMigration, erro
 	if err != nil {
 		return nil, err
 	}
-	return []modulehost.SchemaMigration{foundation, executionSteps, dataScope}, nil
+	erasure, err := buildMigration(renderer, 4, "subject_erasure_fences", []table{
+		{"_lifecycle_subject_erasure_fences", []ormschema.ColumnDefinition{key("workspace_id"), key("subject_id"), key("request_id")}, []string{"workspace_id", "subject_id"}},
+		{"_lifecycle_account_erasure_approvals", []ormschema.ColumnDefinition{key("workspace_id"), key("request_id"), text("payload_json")}, []string{"workspace_id", "request_id"}},
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	return []modulehost.SchemaMigration{foundation, executionSteps, dataScope, erasure}, nil
 }
 
 func buildDataScopeMigration(renderer modulehost.Dialect) (modulehost.SchemaMigration, error) {

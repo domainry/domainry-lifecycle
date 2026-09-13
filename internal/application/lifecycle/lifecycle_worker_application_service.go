@@ -2,7 +2,11 @@ package lifecycle
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"github.com/domainry/domainry-foundation/requestcontext"
+	lifecyclecontract "github.com/domainry/domainry-lifecycle-sdk/contract"
+	"strings"
 	"time"
 
 	lifecyclesdk "github.com/domainry/domainry-lifecycle-sdk"
@@ -33,39 +37,72 @@ func (s *LifecycleApplicationService) ReplayRegisteredDeletions(ctx context.Cont
 	if err != nil {
 		return 0, err
 	}
-	replayed := 0
-	err = s.withinTransaction(ctx, func(transactionContext context.Context) error {
-		registrations, err := s.subjectRequests.ListPendingDeletionRegistrations(transactionContext, workspaceID, limit, filter)
-		if err != nil {
-			return err
-		}
-		// Validate the complete candidate set before the first owner side effect.
-		// Embedded owner handlers receive the same host transaction context and
-		// the durable request ID remains their retry/idempotency identity.
-		for _, registration := range registrations {
-			holds, holdErr := s.legalHolds.ActiveLegalHolds(transactionContext, lifecyclemodel.ResourceTarget{WorkspaceID: workspaceID, ResourceType: "data_subject", ResourceID: registration.ResolvedIdentity}, time.Now().UTC())
-			if holdErr != nil {
-				return holdErr
-			}
-			if len(holds) > 0 {
-				return fmt.Errorf("backup deletion replay blocked by legal hold")
-			}
-		}
-		for _, registration := range registrations {
-			for _, handler := range s.subjectHandlers {
-				if _, err := handler.EraseSubjectForRequest(transactionContext, registration.RequestID, workspaceID, registration.ResolvedIdentity, nil); err != nil {
-					return err
-				}
-			}
-			if err := s.audit(transactionContext, workspaceID, "lifecycle.deletion.replayed", principal.UserID, registration.RequestID, "", registration); err != nil {
-				return err
-			}
-			replayed++
-		}
-		return nil
-	})
+	ctx = requestcontext.WithWorkspaceID(ctx, workspaceID)
+	registrations, err := s.subjectRequests.ListPendingDeletionRegistrations(ctx, workspaceID, limit, filter)
 	if err != nil {
 		return 0, err
+	}
+	// The restore gate keeps traffic closed. Validate holds for the full batch
+	// before starting source-owned transactions or external file effects.
+	for _, registration := range registrations {
+		holds, err := s.legalHolds.ActiveLegalHolds(ctx, lifecyclemodel.ResourceTarget{WorkspaceID: workspaceID, ResourceType: "data_subject", ResourceID: registration.ResolvedIdentity}, time.Now().UTC())
+		if err != nil {
+			return 0, err
+		}
+		if len(holds) > 0 {
+			return 0, fmt.Errorf("backup deletion replay blocked by legal hold")
+		}
+	}
+	replayed := 0
+	for _, registration := range registrations {
+		steps, err := s.subjectRequests.ListSubjectExecutionSteps(ctx, workspaceID, registration.RequestID)
+		if err != nil {
+			return replayed, err
+		}
+		plans := map[string]json.RawMessage{}
+		for _, step := range steps {
+			if step.Operation == "erase_plan" {
+				plans[step.Owner] = step.Payload
+			}
+		}
+		for _, handler := range s.subjectHandlers {
+			planner, ok := handler.(lifecyclecontract.PreparedSubjectErasureHandler)
+			if !ok {
+				continue
+			}
+			owner := strings.TrimSpace(handler.Owner(ctx))
+			if _, exists := plans[owner]; exists {
+				continue
+			}
+			plan, err := planner.PrepareSubjectErasure(ctx, registration.RequestID, workspaceID, registration.ResolvedIdentity)
+			if err != nil {
+				return replayed, err
+			}
+			if !json.Valid(plan) {
+				return replayed, fmt.Errorf("invalid restore erasure plan")
+			}
+			request := lifecyclemodel.SubjectRequest{WorkspaceID: workspaceID, ID: registration.RequestID}
+			if err = s.saveSubjectExecutionStep(ctx, request, owner, "erase_plan", plan, time.Now().UTC()); err != nil {
+				return replayed, err
+			}
+			plans[owner] = plan
+		}
+		for _, handler := range s.subjectHandlers {
+			if planner, ok := handler.(lifecyclecontract.PreparedSubjectErasureHandler); ok {
+				_, err = planner.ErasePreparedSubject(ctx, registration.RequestID, workspaceID, registration.ResolvedIdentity, plans[strings.TrimSpace(handler.Owner(ctx))], nil)
+			} else {
+				_, err = handler.EraseSubjectForRequest(ctx, registration.RequestID, workspaceID, registration.ResolvedIdentity, nil)
+			}
+			if err != nil {
+				return replayed, err
+			}
+		}
+		if err = s.withinTransaction(ctx, func(txctx context.Context) error {
+			return s.audit(txctx, workspaceID, "lifecycle.deletion.replayed", principal.UserID, registration.RequestID, "", registration)
+		}); err != nil {
+			return replayed, err
+		}
+		replayed++
 	}
 	return replayed, nil
 }

@@ -343,6 +343,8 @@ func (s *LifecycleApplicationService) PreviewSubjectRequest(ctx context.Context,
 	if err != nil {
 		return lifecyclemodel.SubjectRequest{}, err
 	}
+	// Workspace is established by the authenticated Lifecycle data scope.
+	ctx = requestcontext.WithWorkspaceID(ctx, workspaceID)
 	request, err := s.subjectRequest(ctx, workspaceID, requestID, filter)
 	if err != nil {
 		return lifecyclemodel.SubjectRequest{}, err
@@ -380,6 +382,8 @@ func (s *LifecycleApplicationService) ExecuteSubjectRequest(ctx context.Context,
 	if err != nil {
 		return lifecyclemodel.SubjectRequest{}, err
 	}
+	// Workspace is established by the authenticated Lifecycle data scope.
+	ctx = requestcontext.WithWorkspaceID(ctx, workspaceID)
 	request, err := s.subjectRequest(ctx, workspaceID, requestID, filter)
 	if err != nil {
 		return lifecyclemodel.SubjectRequest{}, err
@@ -404,6 +408,35 @@ func (s *LifecycleApplicationService) ExecuteSubjectRequest(ctx context.Context,
 	}
 	if err == nil && executing.Kind == lifecyclemodel.SubjectRequestErase && len(holds) > 0 {
 		err = fmt.Errorf("subject erasure blocked by legal hold")
+	}
+	// Freeze every external-cleanup plan before the first owner mutation.
+	// Persisting per-owner plans here preserves file pointers even if business
+	// data is erased and the process stops before the owner receipt is saved.
+	if err == nil && executing.Kind == lifecyclemodel.SubjectRequestErase {
+		for _, handler := range s.subjectHandlers {
+			planner, prepared := handler.(lifecyclecontract.PreparedSubjectErasureHandler)
+			if !prepared {
+				continue
+			}
+			owner := strings.TrimSpace(handler.Owner(ctx))
+			key := subjectExecutionStepKey(owner, "erase_plan")
+			if _, found := completedSteps[key]; found {
+				continue
+			}
+			var plan json.RawMessage
+			plan, err = planner.PrepareSubjectErasure(ctx, executing.ID, workspaceID, executing.ResolvedIdentity)
+			if err != nil {
+				break
+			}
+			if !json.Valid(plan) {
+				err = fmt.Errorf("subject owner %s returned an invalid erasure plan", owner)
+				break
+			}
+			if err = s.saveSubjectExecutionStep(ctx, executing, owner, "erase_plan", plan, time.Now().UTC()); err != nil {
+				break
+			}
+			completedSteps[key] = append(json.RawMessage(nil), plan...)
+		}
 	}
 	if err == nil && executing.Kind == lifecyclemodel.SubjectRequestErase && s.externalErasure != nil {
 		stepKey := subjectExecutionStepKey("external_erasure", "erase")
@@ -454,7 +487,11 @@ func (s *LifecycleApplicationService) ExecuteSubjectRequest(ctx context.Context,
 					err = conversionErr
 					break
 				}
-				payload, err = handler.EraseSubjectForRequest(ctx, executing.ID, workspaceID, executing.ResolvedIdentity, externalHolds)
+				if planner, prepared := handler.(lifecyclecontract.PreparedSubjectErasureHandler); prepared {
+					payload, err = planner.ErasePreparedSubject(ctx, executing.ID, workspaceID, executing.ResolvedIdentity, completedSteps[subjectExecutionStepKey(owner, "erase_plan")], externalHolds)
+				} else {
+					payload, err = handler.EraseSubjectForRequest(ctx, executing.ID, workspaceID, executing.ResolvedIdentity, externalHolds)
+				}
 			}
 			if err != nil {
 				break
@@ -485,6 +522,10 @@ func (s *LifecycleApplicationService) ExecuteSubjectRequest(ctx context.Context,
 		}
 	} else {
 		completed.ResultReference = "erase-evidence:" + completed.ID
+		completed.Reason = "[erased]"
+		completed.SecondFactorRef = ""
+		completed.ImpactPreview = nil
+		completed.SubjectID = completed.ResolvedIdentity
 		completed.BackupPending = true
 	}
 	if err != nil {

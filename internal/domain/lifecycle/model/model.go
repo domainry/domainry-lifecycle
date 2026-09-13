@@ -168,6 +168,11 @@ type SubjectRequest struct {
 	UpdatedAt         time.Time            `json:"updated_at"`
 }
 
+type SubjectExportReference struct {
+	RequestID string `json:"request_id"`
+	Reference string `json:"reference"`
+}
+
 type ExternalErasure struct {
 	ID           string    `json:"id"`
 	RequestID    string    `json:"request_id"`

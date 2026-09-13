@@ -59,6 +59,7 @@ func (*Binding) Descriptor() sdk.Descriptor {
 		Mode:            sdk.DeploymentModeModule,
 		Capabilities: sdk.Capabilities{
 			Governance: true, SubjectRequests: true, RetentionWorker: true,
+			AccountErasure:  true,
 			UploadArtifacts: true, ArchiveEvidence: true,
 		},
 	}
@@ -83,7 +84,9 @@ func (b *Binding) BindOwners(ctx context.Context, extensions sdk.OwnerExtensions
 		executorOwners[owner] = true
 	}
 	subjectOwners := map[string]bool{}
-	subjectHandlers := make([]contract.SubjectExecutionHandler, 0, len(extensions.SubjectHandlers))
+	subjectHandlers := make([]contract.SubjectExecutionHandler, 0, len(extensions.SubjectHandlers)+1)
+	subjectOwners["lifecycle"] = true
+	subjectHandlers = append(subjectHandlers, lifecycleapplication.NewSubjectRequestErasure(b.repository, extensions.Artifacts))
 	for _, handler := range extensions.SubjectHandlers {
 		owner := ""
 		if handler != nil {
@@ -177,11 +180,11 @@ func (b *Binding) UploadArtifacts(options sdk.UploadArtifactOptions) (contract.U
 	return infra.NewFileArtifactStore(b.host, options.Fields, options.Root, storeOptions...), nil
 }
 
-func (*Binding) SubjectArtifacts(root string) (contract.SubjectArtifactStore, error) {
+func (b *Binding) SubjectArtifacts(root string) (contract.SubjectArtifactStore, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, &sdk.Error{StatusCode: 400, Code: "lifecycle.subject_artifact_root_required"}
 	}
-	return infra.NewSubjectArtifactStore(root), nil
+	return infra.NewSubjectArtifactStore(b.host, root), nil
 }
 
 func (b *Binding) ArchiveStore() contract.ArchiveStore {
