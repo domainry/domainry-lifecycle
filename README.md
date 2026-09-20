@@ -1,5 +1,7 @@
 # domainry-lifecycle
 
+Product Agent question index: [`capability/agent/index.json`](capability/agent/index.json). Installed retention policies, cleanup workers, and deletion replay are Runtime defaults and are intentionally absent; product routing exposes only confirmed retention/legal-hold exceptions and subject-right requests.
+
 Reusable, in-process data-lifecycle governance for Domainry hosts.
 
 Lifecycle owns its domain policy, application use cases, `_lifecycle_*` tables,
