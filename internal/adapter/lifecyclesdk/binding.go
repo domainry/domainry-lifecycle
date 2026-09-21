@@ -167,7 +167,7 @@ func (b *Binding) application() *lifecycleapplication.LifecycleApplicationServic
 }
 
 func (b *Binding) UploadArtifacts(options sdk.UploadArtifactOptions) (contract.UploadFileArtifactStore, error) {
-	if b == nil || b.host == nil || strings.TrimSpace(options.Root) == "" || options.Fields == nil {
+	if b == nil || b.host == nil || (strings.TrimSpace(options.Root) == "" && options.Content == nil) || options.Fields == nil {
 		return nil, &sdk.Error{StatusCode: 400, Code: "lifecycle.upload_artifact_options_invalid"}
 	}
 	storeOptions := make([]infra.FileArtifactStoreOption, 0, 2)
@@ -177,14 +177,21 @@ func (b *Binding) UploadArtifacts(options sdk.UploadArtifactOptions) (contract.U
 	if options.ExpiredReferences != nil {
 		storeOptions = append(storeOptions, infra.WithExpiredUploadReferenceCleaner(options.ExpiredReferences))
 	}
+	if options.Content != nil {
+		storeOptions = append(storeOptions, infra.WithArtifactContentStore(options.Content))
+	}
 	return infra.NewFileArtifactStore(b.host, options.Fields, options.Root, storeOptions...), nil
 }
 
-func (b *Binding) SubjectArtifacts(root string) (contract.SubjectArtifactStore, error) {
-	if strings.TrimSpace(root) == "" {
+func (b *Binding) SubjectArtifacts(root string, content ...contract.ArtifactContentStore) (contract.SubjectArtifactStore, error) {
+	var storage contract.ArtifactContentStore
+	if len(content) > 0 {
+		storage = content[0]
+	}
+	if strings.TrimSpace(root) == "" && storage == nil {
 		return nil, &sdk.Error{StatusCode: 400, Code: "lifecycle.subject_artifact_root_required"}
 	}
-	return infra.NewSubjectArtifactStore(b.host, root), nil
+	return infra.NewSubjectArtifactStore(b.host, root, storage), nil
 }
 
 func (b *Binding) ArchiveStore() contract.ArchiveStore {

@@ -1,14 +1,15 @@
-package modulehttptransport
+package capability
 
 import (
 	"testing"
 
 	"github.com/domainry/domainry-foundation/modulecapability"
 	"github.com/domainry/domainry-foundation/modulecapability/contracttest"
+	lifecyclehttp "github.com/domainry/domainry-lifecycle/internal/transport/http/module"
 )
 
 func TestLifecycleCapabilityTracksOwnerRoutesWithoutInventedAuthoringValidation(t *testing.T) {
-	binding, err := NewCapabilityBinding()
+	binding, err := Open(Inputs{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +28,7 @@ func TestLifecycleCapabilityTracksOwnerRoutesWithoutInventedAuthoringValidation(
 			t.Fatalf("Lifecycle runtime request DTOs leaked into model validation scopes: %v", category.ValidationScopes)
 		}
 	}
-	routes, err := lifecycleRoutes()
+	routes, err := lifecyclehttp.CapabilityRoutes()
 	if err != nil {
 		t.Fatal(err)
 	}

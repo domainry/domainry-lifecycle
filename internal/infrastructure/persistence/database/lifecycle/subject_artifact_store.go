@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
 	lifecyclecontract "github.com/domainry/domainry-lifecycle-sdk/contract"
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
 	filesystem "github.com/domainry/domainry-lifecycle/internal/infrastructure/artifact/filesystem"
@@ -16,8 +17,8 @@ type SubjectArtifactStore struct {
 	host modulehost.Host
 }
 
-func NewSubjectArtifactStore(host modulehost.Host, root string) *SubjectArtifactStore {
-	return &SubjectArtifactStore{SubjectStore: filesystem.NewSubjectStore(root), host: host}
+func NewSubjectArtifactStore(host modulehost.Host, root string, content ...lifecyclecontract.ArtifactContentStore) *SubjectArtifactStore {
+	return &SubjectArtifactStore{SubjectStore: filesystem.NewSubjectStore(root, content...), host: host}
 }
 
 func (s *SubjectArtifactStore) DeleteSubjectFileVersion(ctx context.Context, ref lifecyclecontract.SubjectFileReference, expected lifecyclecontract.SubjectFileEvidence) (lifecyclecontract.SubjectFileEvidence, error) {

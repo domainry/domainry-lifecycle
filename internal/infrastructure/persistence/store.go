@@ -31,8 +31,12 @@ func WithExpiredUploadReferenceCleaner(cleaner contract.ExpiredUploadReferenceCl
 	return database.WithExpiredUploadReferenceCleaner(cleaner)
 }
 
-func NewSubjectArtifactStore(host modulehost.Host, root string) contract.SubjectArtifactStore {
-	return database.NewSubjectArtifactStore(host, root)
+func WithArtifactContentStore(content contract.ArtifactContentStore) FileArtifactStoreOption {
+	return database.WithArtifactContentStore(content)
+}
+
+func NewSubjectArtifactStore(host modulehost.Host, root string, content ...contract.ArtifactContentStore) contract.SubjectArtifactStore {
+	return database.NewSubjectArtifactStore(host, root, content...)
 }
 
 func NewArchiveWriter(host modulehost.Host) ArchiveWriter { return database.NewArchiveWriter(host) }

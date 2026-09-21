@@ -8,6 +8,7 @@
 
 - Fulfilling a subject access request across project records, audit evidence, and external CRM mappings.
 - Closing a customer account by erasing eligible data while retaining legally held evidence and reporting per-owner completion.
+- Retrying only a temporarily failed owner while completed owners keep their durable idempotent results.
 
 ## Use when
 
@@ -32,7 +33,7 @@ Resolve the subject through Identity, collect source-owner handlers, check legal
 
 ## Example
 
-A customer erasure request removes eligible product data and external CRM mappings, retains legally held audit evidence, and reports per-owner completion without Lifecycle editing owner tables.
+For a verified subject export, Lifecycle asks Identity, project Objects, Notification, Audit, and mapped external owners for bounded contributions; every owner reports `completed`, `no_data`, `retained/restricted`, or `failed`, and Data Exchange assembles the authorized Artifact. For erasure, a CRM owner may complete while Audit reports Legal Hold and Notification is temporarily unavailable; the overall request remains recoverable and does not claim full completion. Retrying preserves the original request identity and skips completed owners. Deleting one ordinary order is not a subject-right request.
 
 ## Permissions and scope
 

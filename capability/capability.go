@@ -4,11 +4,10 @@ package capability
 
 import (
 	"github.com/domainry/domainry-foundation/modulecapability"
-	lifecyclehttp "github.com/domainry/domainry-lifecycle/internal/transport/http/module"
 )
 
 type Inputs struct{}
 
-func Open(Inputs) (*modulecapability.StaticBinding, error) {
-	return lifecyclehttp.NewCapabilityBinding()
+func Open(inputs Inputs) (*modulecapability.StaticBinding, error) {
+	return openContract(inputs)
 }

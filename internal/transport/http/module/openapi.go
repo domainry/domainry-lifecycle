@@ -77,3 +77,9 @@ func lifecycleOpenAPIOperationsByAction() map[string]map[string]any {
 	add(lifecyclesdk.ActionLifecycleDeletionsReplay, "replayLifecycleDeletions", "Replay registered deletions after restore", "200", nil, query("limit", false, map[string]any{"type": "integer", "minimum": 1}))
 	return operations
 }
+
+// CapabilityOpenAPIOperationsByAction returns the source-owned OpenAPI facts
+// consumed by the public capability contract.
+func CapabilityOpenAPIOperationsByAction() map[string]map[string]any {
+	return lifecycleOpenAPIOperationsByAction()
+}

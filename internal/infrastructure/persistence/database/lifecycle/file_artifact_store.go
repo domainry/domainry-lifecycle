@@ -30,6 +30,7 @@ type FileArtifactStore struct {
 	fields     lifecyclecontract.UploadFieldCatalog
 	references lifecyclecontract.UploadArtifactReferenceResolver
 	cleaner    lifecyclecontract.ExpiredUploadReferenceCleaner
+	content    lifecyclecontract.ArtifactContentStore
 	uploadRoot string
 	removeFile func(string) error
 	absPath    func(string) (string, error)
@@ -45,6 +46,10 @@ func WithUploadArtifactReferences(references lifecyclecontract.UploadArtifactRef
 
 func WithExpiredUploadReferenceCleaner(cleaner lifecyclecontract.ExpiredUploadReferenceCleaner) FileArtifactStoreOption {
 	return func(store *FileArtifactStore) { store.cleaner = cleaner }
+}
+
+func WithArtifactContentStore(content lifecyclecontract.ArtifactContentStore) FileArtifactStoreOption {
+	return func(store *FileArtifactStore) { store.content = content }
 }
 
 func NewFileArtifactStore(host modulehost.Host, fields lifecyclecontract.UploadFieldCatalog, uploadRoot string, options ...FileArtifactStoreOption) *FileArtifactStore {
@@ -314,12 +319,18 @@ func (s *FileArtifactStore) ReconcileUploadArtifacts(ctx context.Context, scope 
 		if now.Before(deleteAfter) {
 			continue
 		}
-		path, err := s.artifactPath(item.workspaceID, item.filename)
-		if err != nil {
-			return result, err
-		}
-		if err := s.removeFile(path); err != nil && !os.IsNotExist(err) {
-			return result, err
+		if s.content != nil {
+			if err := s.content.Delete(ctx, item.workspaceID, item.filename); err != nil && !errors.Is(err, lifecyclecontract.ErrArtifactContentNotFound) {
+				return result, err
+			}
+		} else {
+			path, err := s.artifactPath(item.workspaceID, item.filename)
+			if err != nil {
+				return result, err
+			}
+			if err := s.removeFile(path); err != nil && !os.IsNotExist(err) {
+				return result, err
+			}
 		}
 		if err := s.markArtifactDeleted(ctx, item.workspaceID, item.id, now); err != nil {
 			return result, err

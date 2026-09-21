@@ -90,5 +90,11 @@ func lifecycleRoutes() ([]modulehttp.Route, error) {
 	return routes, nil
 }
 
+// CapabilityRoutes returns the immutable source-owned route manifest used by
+// the public capability contract.
+func CapabilityRoutes() ([]modulehttp.Route, error) {
+	return lifecycleRoutes()
+}
+
 var _ modulehttp.Adapter = (*lifecycleHTTPAdapter)(nil)
 var _ modulehttp.OpenAPIProvider = (*lifecycleHTTPAdapter)(nil)

@@ -8,6 +8,8 @@
 
 - A regulator requires one contract class to be retained longer than the Runtime baseline.
 - A legal matter must suspend otherwise eligible cleanup for selected subjects or resources.
+- The installed default retention period already fits, so the project deliberately creates no override.
+- An ordinary aggregate delete remains a business Operation rather than a Lifecycle policy.
 
 ## Use when
 
@@ -19,7 +21,7 @@ Runtime's installed retention policies, automatic cleanup worker, deletion repla
 
 ## How to use
 
-Record the source of the exception, affected owner and resource class, effective period, review authority, and whether it extends retention or suspends deletion. Treat the current compiler as the authoring gate: if no supported Model path can express the confirmed exception, report a Contract Gap instead of inventing Lifecycle JSON or project cleanup code.
+Record the source of the exception, affected owner and resource class, effective period, review authority, and whether it extends retention or suspends deletion. Treat the current compiler as the authoring gate: if no Model path can express the confirmed exception, add a typed Lifecycle-owned metadata extension plus semantic validation, lowering, governance permissions, execution/replay behavior, and acceptance tests instead of inventing JSON, writing project cleanup code, or dropping the policy.
 
 ## Adaptation cookbook
 
@@ -31,7 +33,7 @@ Record the source of the exception, affected owner and resource class, effective
 
 ## Example
 
-“Keep signed contracts for ten years because regulation X overrides the platform baseline” selects a retention exception. “Run the normal cleanup every night” does not select any product capability because Runtime owns the worker and installed policy execution.
+If the installed seven-year policy already satisfies invoices, create no project override. “Keep signed contracts for ten years because regulation X overrides the platform baseline” identifies the exact owner/data class, legal basis, effective version, approver, and review date. A Legal Hold on customer `c-42` suspends eligible cleanup and subject erasure for its declared resources; release resumes future processing and does not pretend earlier deletion occurred. “Delete draft order 88” is an owner Operation, while “run normal cleanup every night” selects no project capability because Runtime owns the worker and installed policy execution.
 
 ## Permissions and scope
 

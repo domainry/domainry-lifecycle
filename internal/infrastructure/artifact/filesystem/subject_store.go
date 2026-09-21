@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -22,6 +23,7 @@ const lifecycleSubjectFileLimit = 5 << 20
 type SubjectStore struct {
 	uploadRoot string
 	directory  string
+	content    lifecyclecontract.ArtifactContentStore
 }
 
 type lifecycleSubjectArtifact struct {
@@ -30,8 +32,12 @@ type lifecycleSubjectArtifact struct {
 	Payload     json.RawMessage `json:"payload"`
 }
 
-func NewSubjectStore(directory string) *SubjectStore {
-	return &SubjectStore{uploadRoot: directory, directory: filepath.Join(directory, "lifecycle-exports")}
+func NewSubjectStore(directory string, content ...lifecyclecontract.ArtifactContentStore) *SubjectStore {
+	var storage lifecyclecontract.ArtifactContentStore
+	if len(content) > 0 {
+		storage = content[0]
+	}
+	return &SubjectStore{uploadRoot: directory, directory: filepath.Join(directory, "lifecycle-exports"), content: storage}
 }
 
 func (s *SubjectStore) PutSubjectExport(ctx context.Context, workspaceID, requestID string, payload json.RawMessage, expiresAt time.Time) (string, error) {
@@ -183,6 +189,29 @@ func (s *SubjectStore) DeleteExpiredUploadStaging(ctx context.Context, now time.
 }
 
 func (s *SubjectStore) ExportSubjectFile(ctx context.Context, reference lifecyclecontract.SubjectFileReference) (lifecyclecontract.SubjectFileEvidence, error) {
+	workspaceID, filename, err := subjectFileIdentity(reference)
+	if err != nil {
+		return lifecyclecontract.SubjectFileEvidence{}, err
+	}
+	if s.content != nil {
+		if err := ctx.Err(); err != nil {
+			return lifecyclecontract.SubjectFileEvidence{}, err
+		}
+		reader, err := s.content.Open(ctx, workspaceID, filename)
+		if err != nil {
+			return lifecyclecontract.SubjectFileEvidence{}, err
+		}
+		defer reader.Close()
+		content, err := io.ReadAll(io.LimitReader(reader, lifecycleSubjectFileLimit+1))
+		if err != nil {
+			return lifecyclecontract.SubjectFileEvidence{}, err
+		}
+		if len(content) > lifecycleSubjectFileLimit {
+			return lifecyclecontract.SubjectFileEvidence{}, fmt.Errorf("subject file exceeds governed upload limit")
+		}
+		digest := sha256.Sum256(content)
+		return lifecyclecontract.SubjectFileEvidence{Reference: reference.Reference, Filename: filename, ContentType: http.DetectContentType(content), Size: int64(len(content)), SHA256: hex.EncodeToString(digest[:]), Content: content}, nil
+	}
 	path, filename, err := s.subjectFilePath(reference)
 	if err != nil {
 		return lifecyclecontract.SubjectFileEvidence{}, err
@@ -211,6 +240,21 @@ func (s *SubjectStore) ExportSubjectFile(ctx context.Context, reference lifecycl
 }
 
 func (s *SubjectStore) DeleteSubjectFile(ctx context.Context, reference lifecyclecontract.SubjectFileReference) (lifecyclecontract.SubjectFileEvidence, error) {
+	workspaceID, filename, err := subjectFileIdentity(reference)
+	if err != nil {
+		return lifecyclecontract.SubjectFileEvidence{}, err
+	}
+	if s.content != nil {
+		evidence, err := s.ExportSubjectFile(ctx, reference)
+		if err != nil {
+			return lifecyclecontract.SubjectFileEvidence{}, err
+		}
+		evidence.Content = nil
+		if err := s.content.Delete(ctx, workspaceID, filename); err != nil {
+			return lifecyclecontract.SubjectFileEvidence{}, err
+		}
+		return evidence, nil
+	}
 	path, _, err := s.subjectFilePath(reference)
 	if err != nil {
 		return lifecyclecontract.SubjectFileEvidence{}, err
@@ -227,19 +271,11 @@ func (s *SubjectStore) DeleteSubjectFile(ctx context.Context, reference lifecycl
 }
 
 func (s *SubjectStore) subjectFilePath(reference lifecyclecontract.SubjectFileReference) (string, string, error) {
-	workspace, err := lifecycleaccess.NewWorkspaceID(reference.WorkspaceID)
+	workspaceID, filename, err := subjectFileIdentity(reference)
 	if err != nil {
 		return "", "", err
 	}
-	parsed, err := url.Parse(strings.TrimSpace(reference.Reference))
-	if err != nil {
-		return "", "", err
-	}
-	filename := filepath.Base(parsed.Path)
-	if filename == "." || filename == ".." || filename == string(filepath.Separator) {
-		return "", "", fmt.Errorf("invalid subject file reference")
-	}
-	digest := sha256.Sum256([]byte(workspace.String()))
+	digest := sha256.Sum256([]byte(workspaceID))
 	workspaceDirectory := "workspace-" + hex.EncodeToString(digest[:16])
 	if strings.TrimSpace(s.uploadRoot) == "" {
 		return "", "", fmt.Errorf("upload root is required")
@@ -250,6 +286,22 @@ func (s *SubjectStore) subjectFilePath(reference lifecyclecontract.SubjectFileRe
 	}
 	path := filepath.Join(root, workspaceDirectory, filename)
 	return path, filename, nil
+}
+
+func subjectFileIdentity(reference lifecyclecontract.SubjectFileReference) (string, string, error) {
+	workspace, err := lifecycleaccess.NewWorkspaceID(reference.WorkspaceID)
+	if err != nil {
+		return "", "", err
+	}
+	parsed, err := url.Parse(strings.TrimSpace(reference.Reference))
+	if err != nil {
+		return "", "", err
+	}
+	filename := filepath.Base(parsed.Path)
+	if filename == "." || filename == ".." || filename == string(filepath.Separator) || strings.Contains(filename, "..") {
+		return "", "", fmt.Errorf("invalid subject file reference")
+	}
+	return workspace.String(), filename, nil
 }
 
 func (s *SubjectStore) path(reference string) (string, error) {

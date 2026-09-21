@@ -3,6 +3,7 @@ package filesystem
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,13 +16,33 @@ func (s *SubjectStore) DeleteSubjectFileVersion(ctx context.Context, reference l
 	if err := ctx.Err(); err != nil {
 		return lifecyclecontract.SubjectFileEvidence{}, err
 	}
-	path, filename, err := s.subjectFilePath(reference)
+	workspaceID, filename, err := subjectFileIdentity(reference)
 	if err != nil {
 		return lifecyclecontract.SubjectFileEvidence{}, err
 	}
 	digest, decodeErr := hex.DecodeString(expected.SHA256)
 	if decodeErr != nil || len(digest) != 32 || expected.Size < 0 || len(expected.Content) != 0 || expected.Reference != reference.Reference || expected.Filename != filename || strings.TrimSpace(reference.Reference) != "/uploads/"+filename {
 		return lifecyclecontract.SubjectFileEvidence{}, fmt.Errorf("subject file erasure requires exact prepared evidence")
+	}
+	if s.content != nil {
+		current, err := s.content.Stat(ctx, workspaceID, filename)
+		if errors.Is(err, lifecyclecontract.ErrArtifactContentNotFound) {
+			return expected, nil
+		}
+		if err != nil {
+			return lifecyclecontract.SubjectFileEvidence{}, err
+		}
+		if !strings.EqualFold(strings.TrimSpace(current.SHA256), strings.TrimSpace(expected.SHA256)) || current.Size != expected.Size {
+			return lifecyclecontract.SubjectFileEvidence{}, fmt.Errorf("subject file version changed after erasure planning")
+		}
+		if err := s.content.Delete(ctx, workspaceID, filename); err != nil && !errors.Is(err, lifecyclecontract.ErrArtifactContentNotFound) {
+			return lifecyclecontract.SubjectFileEvidence{}, err
+		}
+		return expected, nil
+	}
+	path, _, err := s.subjectFilePath(reference)
+	if err != nil {
+		return lifecyclecontract.SubjectFileEvidence{}, err
 	}
 	// Uploads are immutable after publication. Reject filesystem aliases so a
 	// pointer in one workspace cannot identify another workspace's physical file.
