@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/domainry/domainry-audit-sdk v0.1.6
-	github.com/domainry/domainry-foundation v0.1.20
+	github.com/domainry/domainry-foundation v0.1.24
 	github.com/domainry/domainry-identity-sdk v0.1.14
 	github.com/domainry/domainry-lifecycle-sdk v0.1.16
 	github.com/domainry/domainry-metadata-sdk v0.1.5

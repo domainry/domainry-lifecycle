@@ -21,7 +21,7 @@ func TestPortableSchemaRendersAllSupportedDialects(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(migrations) != 2 || len(migrations[0].Statements) != len(tables())+len(indexes()) || len(migrations[1].Statements) != len(subjectExecutionStepTables())+len(subjectExecutionStepIndexes()) {
+			if len(migrations) != 1 || len(migrations[0].Statements) != len(tables())+len(indexes()) {
 				t.Fatalf("unexpected migration inventory: %#v", migrations)
 			}
 			joined := strings.Join(migrations[0].Statements, "\n")
@@ -30,10 +30,10 @@ func TestPortableSchemaRendersAllSupportedDialects(t *testing.T) {
 					t.Fatalf("%s migration omitted %s", name, table.name)
 				}
 			}
-			if !strings.Contains(strings.Join(migrations[1].Statements, "\n"), "_subject_steps") {
-				t.Fatalf("%s migration omitted subject execution steps", name)
+			if strings.Contains(joined, "_subject_requests") || strings.Contains(joined, "_subject_steps") {
+				t.Fatalf("%s Lifecycle-owned migration retained shared Subject Lifecycle tables", name)
 			}
-			allMigrations := joined + "\n" + strings.Join(migrations[1].Statements, "\n")
+			allMigrations := joined
 			for _, retired := range []string{"_lifecycle_account_erasure_approvals", "_lifecycle_external_erasure_requests", "_lifecycle_deletion_registry", "_lifecycle_subject_erasure_fences", "_lifecycle_subject_execution_steps", "_lifecycle_archive_entries", "_lifecycle_file_artifacts"} {
 				if strings.Contains(allMigrations, retired) {
 					t.Fatalf("%s migration retained folded subject state table %s", name, retired)

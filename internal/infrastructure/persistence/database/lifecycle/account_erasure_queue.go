@@ -66,7 +66,7 @@ func (s LifecycleStore) ListRunnableAccountErasures(ctx context.Context, limit i
 	ready := query.Or(query.EqualValue(query.QualifiedColumn("r", "status"), string(model.SubjectRequestApproved)),
 		query.And(query.EqualValue(query.QualifiedColumn("r", "status"), string(model.SubjectRequestFailed)), query.LessThanValue(query.QualifiedColumn("r", "updated_at"), lifecycleTime(now.Add(-30*time.Second)))),
 		query.And(query.EqualValue(query.QualifiedColumn("r", "status"), string(model.SubjectRequestExecuting)), query.LessThanValue(query.QualifiedColumn("r", "updated_at"), lifecycleTime(now.Add(-5*time.Minute)))))
-	statement, args, err := query.NewSelectBuilder(s.renderer, "_subject_requests").Alias("r").
+	statement, args, err := query.NewSelectBuilder(s.renderer, subjectRequestsTable).Alias("r").
 		Projections(query.Project(query.QualifiedColumn("r", "payload_json"))).
 		Where(query.And(
 			query.EqualValue(query.QualifiedColumn("r", "request_type"), string(model.SubjectRequestTypeAccountErasure)),

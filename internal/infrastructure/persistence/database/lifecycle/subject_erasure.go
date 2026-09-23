@@ -6,14 +6,15 @@ import (
 	"fmt"
 	"time"
 
+	sharedsubject "github.com/domainry/domainry-foundation/subjectlifecycle"
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
 	model "github.com/domainry/domainry-lifecycle/internal/domain/lifecycle/model"
 	"github.com/domainry/domainry-orm/query"
 )
 
 const (
-	subjectRequestsTable         = "_subject_requests"
-	subjectExecutionStepsTable   = "_subject_steps"
+	subjectRequestsTable         = sharedsubject.RequestTableName
+	subjectExecutionStepsTable   = sharedsubject.StepTableName
 	subjectErasureFenceOwner     = "lifecycle"
 	subjectErasureFenceOperation = "erase_fence"
 )

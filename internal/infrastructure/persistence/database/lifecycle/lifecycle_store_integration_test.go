@@ -9,6 +9,7 @@ import (
 
 	sharedartifact "github.com/domainry/domainry-foundation/artifact"
 	requestcontext "github.com/domainry/domainry-foundation/requestcontext"
+	sharedsubject "github.com/domainry/domainry-foundation/subjectlifecycle"
 	lifecycleaccess "github.com/domainry/domainry-lifecycle-sdk/access"
 	lifecyclecontract "github.com/domainry/domainry-lifecycle-sdk/contract"
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
@@ -228,6 +229,17 @@ func newPersistenceTestStore(t *testing.T) (LifecycleStore, *sql.DB) {
 		t.Fatal(err)
 	}
 	renderer := dialect.WithSchema("")
+	sharedValues, err := sharedsubject.SchemaMigrationsForDialect(renderer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, migration := range sharedValues {
+		for _, statement := range migration.Statements {
+			if _, err := db.ExecContext(t.Context(), statement); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	values, err := schema.Migrations(renderer)
 	if err != nil {
 		t.Fatal(err)

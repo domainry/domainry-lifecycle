@@ -462,7 +462,7 @@ func (s LifecycleStore) SaveSubjectRequest(ctx context.Context, request lifecycl
 	if err != nil {
 		return err
 	}
-	queryValue, args, buildErr := query.NewWorkspaceUpdateBuilder(s.renderer, "_subject_requests", request.WorkspaceID).
+	queryValue, args, buildErr := query.NewWorkspaceUpdateBuilder(s.renderer, subjectRequestsTable, request.WorkspaceID).
 		Set("request_type", request.RequestType).Set("kind", request.Kind).Set("status", request.Status).Set("subject_id", request.SubjectID).Set("resolved_identity", request.ResolvedIdentity).
 		Set("requested_by", request.RequestedBy).Set("owner_org_id", request.OwnerOrgID).Set("download_expires_at", lifecycleTime(request.DownloadExpiresAt)).Set("updated_at", lifecycleTime(request.UpdatedAt)).Set("payload_json", string(payload)).
 		Set("backup_pending", request.BackupPending).
@@ -481,7 +481,7 @@ func (s LifecycleStore) SaveSubjectRequest(ctx context.Context, request lifecycl
 	if count == 1 {
 		return nil
 	}
-	queryValue, args, buildErr = query.NewWorkspaceInsertBuilder(s.renderer, "_subject_requests", request.WorkspaceID).
+	queryValue, args, buildErr = query.NewWorkspaceInsertBuilder(s.renderer, subjectRequestsTable, request.WorkspaceID).
 		Columns("id", "request_type", "kind", "status", "subject_id", "resolved_identity", "requested_by", "owner_org_id", "download_expires_at", "backup_pending", "updated_at", "payload_json").
 		Values(request.ID, request.RequestType, request.Kind, request.Status, request.SubjectID, request.ResolvedIdentity, request.RequestedBy, request.OwnerOrgID, lifecycleTime(request.DownloadExpiresAt), request.BackupPending, lifecycleTime(request.UpdatedAt), string(payload)).Build()
 	if buildErr != nil {
@@ -507,7 +507,7 @@ func (s LifecycleStore) TransitionSubjectRequest(ctx context.Context, current, n
 	if err != nil {
 		return err
 	}
-	queryValue, args, buildErr := query.NewWorkspaceUpdateBuilder(s.renderer, "_subject_requests", next.WorkspaceID).
+	queryValue, args, buildErr := query.NewWorkspaceUpdateBuilder(s.renderer, subjectRequestsTable, next.WorkspaceID).
 		Set("request_type", next.RequestType).Set("kind", next.Kind).Set("status", next.Status).Set("subject_id", next.SubjectID).Set("resolved_identity", next.ResolvedIdentity).
 		Set("download_expires_at", lifecycleTime(next.DownloadExpiresAt)).Set("backup_pending", next.BackupPending).Set("updated_at", lifecycleTime(next.UpdatedAt)).Set("payload_json", string(payload)).
 		Where(andPredicates(query.Equal("id", next.ID), query.Equal("status", current.Status), query.Equal("updated_at", lifecycleTime(current.UpdatedAt)), dataScopePredicate(filter, "requested_by", "owner_org_id"))).Build()
@@ -529,7 +529,7 @@ func (s LifecycleStore) TransitionSubjectRequest(ctx context.Context, current, n
 }
 
 func (s LifecycleStore) GetSubjectRequest(ctx context.Context, workspaceID, id string, filter lifecyclepersistence.DataScopeFilter) (lifecyclemodel.SubjectRequest, bool, error) {
-	queryValue, args, buildErr := query.NewWorkspaceSelectBuilder(s.renderer, "_subject_requests", workspaceID).Columns("payload_json").Where(andPredicates(query.Equal("id", id), query.NotEqual("request_type", lifecyclemodel.SubjectRequestTypeExternalErase), dataScopePredicate(filter, "requested_by", "owner_org_id"))).Build()
+	queryValue, args, buildErr := query.NewWorkspaceSelectBuilder(s.renderer, subjectRequestsTable, workspaceID).Columns("payload_json").Where(andPredicates(query.Equal("id", id), query.NotEqual("request_type", lifecyclemodel.SubjectRequestTypeExternalErase), dataScopePredicate(filter, "requested_by", "owner_org_id"))).Build()
 	if buildErr != nil {
 		return lifecyclemodel.SubjectRequest{}, false, fmt.Errorf("build lifecycle subject request query: %w", buildErr)
 	}
@@ -552,7 +552,7 @@ func (s LifecycleStore) ListSubjectRequests(ctx context.Context, workspaceID str
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	builder := query.NewWorkspaceSelectBuilder(s.renderer, "_subject_requests", workspaceID).Columns("payload_json")
+	builder := query.NewWorkspaceSelectBuilder(s.renderer, subjectRequestsTable, workspaceID).Columns("payload_json")
 	builder.Where(andPredicates(query.NotEqual("request_type", lifecyclemodel.SubjectRequestTypeExternalErase), dataScopePredicate(filter, "requested_by", "owner_org_id")))
 	queryValue, args, buildErr := builder.OrderBy(query.Descending("updated_at")).Limit(limit).Build()
 	if buildErr != nil {
@@ -582,7 +582,7 @@ func (s LifecycleStore) ExpireSubjectExportReferences(ctx context.Context, scope
 	if _, err := lifecycleaccess.NewSystemCommandScope(scope); err != nil {
 		return nil, err
 	}
-	queryValue, args, buildErr := query.NewSelectBuilder(s.renderer, "_subject_requests").Columns("payload_json").Where(query.And(
+	queryValue, args, buildErr := query.NewSelectBuilder(s.renderer, subjectRequestsTable).Columns("payload_json").Where(query.And(
 		query.Equal("kind", lifecyclemodel.SubjectRequestExport), query.Equal("status", lifecyclemodel.SubjectRequestSucceeded),
 		query.NotEqual("download_expires_at", ""), query.LessThanOrEqual("download_expires_at", lifecycleTime(now)),
 	)).Build()
@@ -633,7 +633,7 @@ func (s LifecycleStore) SaveExternalErasures(ctx context.Context, erasures []lif
 			return fmt.Errorf("external erasure parent subject request is unavailable")
 		}
 		var existingPayload string
-		queryValue, args, buildErr := query.NewWorkspaceSelectBuilder(s.renderer, "_subject_requests", erasure.WorkspaceID).
+		queryValue, args, buildErr := query.NewWorkspaceSelectBuilder(s.renderer, subjectRequestsTable, erasure.WorkspaceID).
 			Columns("payload_json").Where(andPredicates(query.Equal("id", erasure.ID), query.Equal("request_type", lifecyclemodel.SubjectRequestTypeExternalErase))).Build()
 		if buildErr != nil {
 			return fmt.Errorf("build external erasure lookup: %w", buildErr)
@@ -654,7 +654,7 @@ func (s LifecycleStore) SaveExternalErasures(ctx context.Context, erasures []lif
 		if marshalErr != nil {
 			return marshalErr
 		}
-		queryValue, args, buildErr = query.NewWorkspaceInsertBuilder(s.renderer, "_subject_requests", erasure.WorkspaceID).
+		queryValue, args, buildErr = query.NewWorkspaceInsertBuilder(s.renderer, subjectRequestsTable, erasure.WorkspaceID).
 			Columns("id", "request_type", "kind", "status", "subject_id", "resolved_identity", "requested_by", "owner_org_id", "download_expires_at", "backup_pending", "updated_at", "payload_json").
 			Values(erasure.ID, lifecyclemodel.SubjectRequestTypeExternalErase, lifecyclemodel.SubjectRequestErase, erasure.Status, erasure.RequestID, parent.ResolvedIdentity, parent.RequestedBy, parent.OwnerOrgID, "", false, lifecycleTime(parent.UpdatedAt), string(payload)).Build()
 		if buildErr != nil {
@@ -668,7 +668,7 @@ func (s LifecycleStore) SaveExternalErasures(ctx context.Context, erasures []lif
 }
 
 func (s LifecycleStore) ListExternalErasures(ctx context.Context, workspaceID, requestID string, filter lifecyclepersistence.DataScopeFilter) ([]lifecyclemodel.ExternalErasure, error) {
-	selectBuilder := query.NewWorkspaceSelectBuilder(s.renderer, "_subject_requests", workspaceID).Columns("payload_json")
+	selectBuilder := query.NewWorkspaceSelectBuilder(s.renderer, subjectRequestsTable, workspaceID).Columns("payload_json")
 	predicates := []query.Predicate{query.Equal("request_type", lifecyclemodel.SubjectRequestTypeExternalErase), dataScopePredicate(filter, "requested_by", "owner_org_id")}
 	if strings.TrimSpace(requestID) != "" {
 		predicates = append(predicates, query.Equal("subject_id", strings.TrimSpace(requestID)))
@@ -702,7 +702,7 @@ func (s LifecycleStore) ListExternalErasures(ctx context.Context, workspaceID, r
 
 func (s LifecycleStore) ReconcileExternalErasure(ctx context.Context, workspaceID, id, evidence string, at time.Time, filter lifecyclepersistence.DataScopeFilter) (lifecyclemodel.ExternalErasure, bool, error) {
 	scopePredicate := dataScopePredicate(filter, "requested_by", "owner_org_id")
-	queryValue, args, buildErr := query.NewWorkspaceSelectBuilder(s.renderer, "_subject_requests", workspaceID).Columns("payload_json").Where(andPredicates(query.Equal("id", id), query.Equal("request_type", lifecyclemodel.SubjectRequestTypeExternalErase), scopePredicate)).Build()
+	queryValue, args, buildErr := query.NewWorkspaceSelectBuilder(s.renderer, subjectRequestsTable, workspaceID).Columns("payload_json").Where(andPredicates(query.Equal("id", id), query.Equal("request_type", lifecyclemodel.SubjectRequestTypeExternalErase), scopePredicate)).Build()
 	if buildErr != nil {
 		return lifecyclemodel.ExternalErasure{}, false, fmt.Errorf("build external erasure query: %w", buildErr)
 	}
@@ -718,7 +718,7 @@ func (s LifecycleStore) ReconcileExternalErasure(ctx context.Context, workspaceI
 	}
 	item.Status, item.Evidence, item.ReconciledAt = "reconciled", strings.TrimSpace(evidence), at
 	updated, _ := json.Marshal(item)
-	queryValue, args, buildErr = query.NewWorkspaceUpdateBuilder(s.renderer, "_subject_requests", workspaceID).
+	queryValue, args, buildErr = query.NewWorkspaceUpdateBuilder(s.renderer, subjectRequestsTable, workspaceID).
 		Set("status", item.Status).Set("updated_at", lifecycleTime(at)).Set("payload_json", string(updated)).
 		Where(andPredicates(query.Equal("id", id), query.Equal("request_type", lifecyclemodel.SubjectRequestTypeExternalErase), scopePredicate)).Build()
 	if buildErr != nil {
@@ -739,7 +739,7 @@ func (s LifecycleStore) ListPendingDeletionRegistrations(ctx context.Context, wo
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	queryValue, args, buildErr := query.NewWorkspaceSelectBuilder(s.renderer, "_subject_requests", workspaceID).
+	queryValue, args, buildErr := query.NewWorkspaceSelectBuilder(s.renderer, subjectRequestsTable, workspaceID).
 		Columns("payload_json").Where(andPredicates(
 		query.NotEqual("request_type", lifecyclemodel.SubjectRequestTypeExternalErase), query.Equal("kind", lifecyclemodel.SubjectRequestErase),
 		query.Equal("status", lifecyclemodel.SubjectRequestSucceeded), query.Equal("backup_pending", true),

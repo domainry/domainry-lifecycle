@@ -4,6 +4,7 @@ package schema
 
 import (
 	"fmt"
+
 	ormschema "github.com/domainry/domainry-orm/schema"
 
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
@@ -30,11 +31,7 @@ func Migrations(renderer modulehost.Dialect) ([]modulehost.SchemaMigration, erro
 	if err != nil {
 		return nil, err
 	}
-	executionSteps, err := buildMigration(renderer, 2, "subject_steps", subjectExecutionStepTables(), subjectExecutionStepIndexes())
-	if err != nil {
-		return nil, err
-	}
-	return []modulehost.SchemaMigration{foundation, executionSteps}, nil
+	return []modulehost.SchemaMigration{foundation}, nil
 }
 
 func buildMigration(renderer modulehost.Dialect, version uint, name string, tableDefinitions []table, indexDefinitions []index) (modulehost.SchemaMigration, error) {
@@ -103,15 +100,10 @@ func text(name string) ormschema.ColumnDefinition {
 func bigint(name string) ormschema.ColumnDefinition {
 	return ormschema.Column(name, ormschema.BigInt()).NotNull()
 }
-func boolean(name string, value bool) ormschema.ColumnDefinition {
-	return ormschema.Column(name, ormschema.Boolean()).NotNull().DefaultValue(value)
-}
-
 func tables() []table {
 	return []table{
 		{"_lifecycle_legal_holds", []ormschema.ColumnDefinition{key("id"), key("workspace_id"), optionalKey("owner"), optionalKey("resource_type"), optionalKey("resource_id"), optionalKey("created_by"), optionalKey("owner_org_id"), key("starts_at"), optionalKey("ends_at"), key("review_at"), text("payload_json")}, nil},
 		{"_lifecycle_cleanup_jobs", []ormschema.ColumnDefinition{key("id"), key("workspace_id"), optionalKey("operation_id"), optionalKey("requested_by"), optionalKey("owner_org_id"), key("policy_key"), key("policy_version"), key("status"), optionalKey("checkpoint_value"), optionalKey("lease_owner"), optionalKey("lease_expires_at"), ormschema.Column("fencing_token", ormschema.BigInt()).NotNull().DefaultValue(int64(0)), key("updated_at"), text("payload_json")}, nil},
-		{"_subject_requests", []ormschema.ColumnDefinition{key("id"), key("workspace_id"), key("request_type"), key("kind"), key("status"), key("subject_id"), optionalKey("resolved_identity"), optionalKey("requested_by"), optionalKey("owner_org_id"), optionalKey("download_expires_at"), boolean("backup_pending", false), key("updated_at"), text("payload_json")}, nil},
 	}
 }
 
@@ -126,26 +118,5 @@ func indexes() []index {
 		{"_lifecycle_cleanup_jobs", "idx_lifecycle_cleanup_operation", false, []string{"workspace_id", "operation_id"}},
 		{"_lifecycle_cleanup_jobs", "idx_lifecycle_cleanup_requester", false, []string{"workspace_id", "requested_by"}},
 		{"_lifecycle_cleanup_jobs", "idx_lifecycle_cleanup_owner_org", false, []string{"workspace_id", "owner_org_id"}},
-		{"_subject_requests", "uniq_subject_workspace_identity", true, []string{"workspace_id", "id"}},
-		{"_subject_requests", "idx_subject_identity", false, []string{"workspace_id", "subject_id", "status", "updated_at"}},
-		{"_subject_requests", "idx_subject_erasure_identity", false, []string{"workspace_id", "request_type", "kind", "resolved_identity", "id"}},
-		{"_subject_requests", "idx_subject_request_type", false, []string{"workspace_id", "request_type", "updated_at", "id"}},
-		{"_subject_requests", "idx_subject_worker", false, []string{"request_type", "kind", "status", "updated_at", "id"}},
-		{"_subject_requests", "idx_subject_deletion_replay", false, []string{"workspace_id", "kind", "status", "backup_pending", "updated_at"}},
-		{"_subject_requests", "idx_subject_requester", false, []string{"workspace_id", "requested_by"}},
-		{"_subject_requests", "idx_subject_owner_org", false, []string{"workspace_id", "owner_org_id"}},
-	}
-}
-
-func subjectExecutionStepTables() []table {
-	return []table{{"_subject_steps", []ormschema.ColumnDefinition{
-		key("workspace_id"), key("request_id"), key("owner"), key("operation"), text("payload_json"), key("completed_at"),
-	}, []string{"workspace_id", "request_id", "owner", "operation"}}}
-}
-
-func subjectExecutionStepIndexes() []index {
-	return []index{
-		{"_subject_steps", "idx_subject_steps_request", false, []string{"workspace_id", "request_id", "completed_at"}},
-		{"_subject_steps", "idx_subject_steps_erasure_fence", false, []string{"workspace_id", "owner", "operation", "request_id"}},
 	}
 }

@@ -16,6 +16,7 @@ import (
 	sharedartifact "github.com/domainry/domainry-foundation/artifact"
 	shareddefinition "github.com/domainry/domainry-foundation/definition"
 	"github.com/domainry/domainry-foundation/modulehttp"
+	sharedsubject "github.com/domainry/domainry-foundation/subjectlifecycle"
 	identitysdk "github.com/domainry/domainry-identity-sdk"
 	lifecyclesdk "github.com/domainry/domainry-lifecycle-sdk"
 	lifecycleaccess "github.com/domainry/domainry-lifecycle-sdk/access"
@@ -108,7 +109,7 @@ type integrationRegistrar struct {
 func (r *integrationRegistrar) ApplyOwnedMigrations(ctx context.Context, owner string, values []modulehost.SchemaMigration) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if owner != migration.Owner && owner != shareddefinition.MigrationOwner && owner != sharedartifact.MigrationOwner {
+	if owner != migration.Owner && owner != shareddefinition.MigrationOwner && owner != sharedartifact.MigrationOwner && owner != sharedsubject.MigrationOwner {
 		return errors.New("unexpected migration owner")
 	}
 	if r.checksums == nil {
@@ -377,7 +378,7 @@ func TestBindingOwnsApplicationPersistenceAndHostTransaction(t *testing.T) {
 		t.Fatalf("migration ledger rows=%d err=%v", migrationRows, err)
 	}
 	calls := host.registrar.snapshot()
-	if len(calls) != 4 || calls[0].owner != shareddefinition.MigrationOwner || calls[1].owner != migration.Owner || calls[2].owner != shareddefinition.MigrationOwner || calls[3].owner != sharedartifact.MigrationOwner || len(calls[1].migrations) != 2 {
+	if len(calls) != 5 || calls[0].owner != shareddefinition.MigrationOwner || calls[1].owner != sharedsubject.MigrationOwner || calls[2].owner != migration.Owner || calls[3].owner != shareddefinition.MigrationOwner || calls[4].owner != sharedartifact.MigrationOwner || len(calls[2].migrations) != 1 {
 		t.Fatalf("host migration registrations=%#v", calls)
 	}
 	for table, expected := range map[string]int{"_subject_requests": 1, "_lifecycle_subject_requests": 0} {
@@ -413,11 +414,11 @@ func TestModuleSubjectExportBusinessContractEndToEnd(t *testing.T) {
 	}
 	_ = reopened.Close(t.Context())
 	calls := host.registrar.snapshot()
-	if len(calls) != 7 {
+	if len(calls) != 9 {
 		t.Fatalf("host migration registrations=%d", len(calls))
 	}
 	for _, call := range calls {
-		if call.owner != migration.Owner && call.owner != shareddefinition.MigrationOwner && call.owner != sharedartifact.MigrationOwner {
+		if call.owner != migration.Owner && call.owner != shareddefinition.MigrationOwner && call.owner != sharedartifact.MigrationOwner && call.owner != sharedsubject.MigrationOwner {
 			t.Fatalf("host migration registration=%#v", call)
 		}
 	}
