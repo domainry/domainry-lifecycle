@@ -56,7 +56,7 @@ the host BlobStore. Lifecycle owns neither `_lifecycle_archive_entries` nor
 
 The embedded module contributes authenticated management/operations routes
 through `modulehttp.Adapter`, including policy, legal-hold, cleanup creation and
-preview, metrics, archive evidence, subject requests, external-erasure
+preview, metrics, archive inspection, subject requests, external-erasure
 reconciliation, and deletion replay. Lifecycle owns their request DTOs,
 redaction, permissions, governance metadata, and typed route contracts.
 

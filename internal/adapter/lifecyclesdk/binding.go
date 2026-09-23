@@ -45,7 +45,7 @@ func (*Binding) Descriptor() sdk.Descriptor {
 		Capabilities: sdk.Capabilities{
 			Governance: true, SubjectRequests: true, RetentionWorker: true,
 			AccountErasure:  true,
-			UploadArtifacts: true, ArchiveEvidence: true,
+			UploadArtifacts: true, ArchiveInspection: true,
 		},
 	}
 }
