@@ -31,7 +31,7 @@ type ArchiveWriter struct {
 }
 
 func NewArchiveWriter(host modulehost.Host) ArchiveWriter {
-	artifactHost, _ := host.(modulehost.ArtifactStoreHost)
+	artifactHost, _ := host.(artifactPersistenceHost)
 	if artifactHost == nil {
 		return ArchiveWriter{}
 	}

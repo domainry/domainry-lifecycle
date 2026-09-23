@@ -52,7 +52,7 @@ func NewLifecycleStore(store modulehost.Host, definitions metadatasdk.Definition
 		auditAppender = auditHost.AuditAppender()
 		auditWithin = auditHost.AuditTransactionalAppender()
 	}
-	artifactHost, _ := store.(modulehost.ArtifactStoreHost)
+	artifactHost, _ := store.(artifactPersistenceHost)
 	var artifacts sharedartifact.ManagedStore
 	var content lifecyclecontract.ArtifactContentStore
 	if artifactHost != nil {

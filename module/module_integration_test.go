@@ -39,7 +39,7 @@ type integrationHost struct {
 	transactions modulehost.Transactor
 	definitions  metadatasdk.DefinitionStore
 	audit        *integrationAudit
-	artifacts    *artifactfixture.Store
+	artifacts    sharedartifact.ManagedStore
 	content      *artifactfixture.Content
 }
 
@@ -62,7 +62,6 @@ func (h integrationHost) AuditTransactionalAppender() auditcontract.Transactiona
 	}
 	return h.audit
 }
-func (h integrationHost) ArtifactStore() sharedartifact.ManagedStore { return h.artifacts }
 func (h integrationHost) ArtifactContentStore() lifecyclecontract.ArtifactContentStore {
 	return h.content
 }
@@ -109,7 +108,7 @@ type integrationRegistrar struct {
 func (r *integrationRegistrar) ApplyOwnedMigrations(ctx context.Context, owner string, values []modulehost.SchemaMigration) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if owner != migration.Owner && owner != shareddefinition.MigrationOwner {
+	if owner != migration.Owner && owner != shareddefinition.MigrationOwner && owner != sharedartifact.MigrationOwner {
 		return errors.New("unexpected migration owner")
 	}
 	if r.checksums == nil {
@@ -291,7 +290,7 @@ func newIntegrationHost(t *testing.T) integrationHost {
 	}
 	host := integrationHost{
 		db: db, dialect: renderer, registrar: registrar, transactions: integrationTransactor{db: db},
-		audit: &integrationAudit{db: db}, artifacts: artifactfixture.NewStore(), content: artifactfixture.NewContent(),
+		audit: &integrationAudit{db: db}, artifacts: sharedartifact.NewSQLStore(db, renderer), content: artifactfixture.NewContent(),
 	}
 	host.definitions = newIntegrationDefinitionStore(t, host)
 	return host
@@ -374,11 +373,11 @@ func TestBindingOwnsApplicationPersistenceAndHostTransaction(t *testing.T) {
 		t.Fatalf("retired Lifecycle audit tables=%d err=%v", retiredAuditTables, err)
 	}
 	var migrationRows int
-	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _schema_migrations").Scan(&migrationRows); err != nil || migrationRows != 3 {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _schema_migrations").Scan(&migrationRows); err != nil || migrationRows != 4 {
 		t.Fatalf("migration ledger rows=%d err=%v", migrationRows, err)
 	}
 	calls := host.registrar.snapshot()
-	if len(calls) != 3 || calls[0].owner != shareddefinition.MigrationOwner || calls[1].owner != migration.Owner || calls[2].owner != shareddefinition.MigrationOwner || len(calls[1].migrations) != 2 {
+	if len(calls) != 4 || calls[0].owner != shareddefinition.MigrationOwner || calls[1].owner != migration.Owner || calls[2].owner != shareddefinition.MigrationOwner || calls[3].owner != sharedartifact.MigrationOwner || len(calls[1].migrations) != 2 {
 		t.Fatalf("host migration registrations=%#v", calls)
 	}
 	for table, expected := range map[string]int{"_subject_requests": 1, "_lifecycle_subject_requests": 0} {
@@ -414,16 +413,16 @@ func TestModuleSubjectExportBusinessContractEndToEnd(t *testing.T) {
 	}
 	_ = reopened.Close(t.Context())
 	calls := host.registrar.snapshot()
-	if len(calls) != 5 {
+	if len(calls) != 7 {
 		t.Fatalf("host migration registrations=%d", len(calls))
 	}
 	for _, call := range calls {
-		if call.owner != migration.Owner && call.owner != shareddefinition.MigrationOwner {
+		if call.owner != migration.Owner && call.owner != shareddefinition.MigrationOwner && call.owner != sharedartifact.MigrationOwner {
 			t.Fatalf("host migration registration=%#v", call)
 		}
 	}
 	var migrationRows, migrationLedgers int
-	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _schema_migrations").Scan(&migrationRows); err != nil || migrationRows != 3 {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _schema_migrations").Scan(&migrationRows); err != nil || migrationRows != 4 {
 		t.Fatalf("migration ledger rows=%d err=%v", migrationRows, err)
 	}
 	// SQLite's catalog is used only as dialect-focused integration evidence;

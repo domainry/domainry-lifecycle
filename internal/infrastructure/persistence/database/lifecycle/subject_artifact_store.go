@@ -31,7 +31,7 @@ func NewSubjectArtifactStore(host modulehost.Host, root string, content ...lifec
 		contentStore = content[0]
 	}
 	result := &SubjectArtifactStore{host: host}
-	if artifactHost, ok := host.(modulehost.ArtifactStoreHost); ok {
+	if artifactHost, ok := host.(artifactPersistenceHost); ok {
 		result.artifacts = artifactHost.ArtifactStore()
 		result.writer = artifactHost.ArtifactContentWriter()
 		if contentStore == nil {

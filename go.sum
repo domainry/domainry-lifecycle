@@ -4,12 +4,12 @@ github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/domainry/domainry-audit-sdk v0.1.6 h1:nx7P6kI20KyqUS7YwvpFfhDIOKlLSNVzPp3eiJZQRb0=
 github.com/domainry/domainry-audit-sdk v0.1.6/go.mod h1:1flPu7n2b92FN2WdcMlpkSy9XdzYteeKrrS854vX/m4=
-github.com/domainry/domainry-foundation v0.1.3 h1:1/uuls2tAGie8Qs3Eg93D3TqYWmCrgWLdkCSebLY7Mk=
-github.com/domainry/domainry-foundation v0.1.3/go.mod h1:pkwel8FFfbVkjAptEDWsA7BxaoPJM8kiQkOwPaIR7eI=
+github.com/domainry/domainry-foundation v0.1.20 h1:abkj5SecQtk9vcyfHV1zY2AAgnYm/U5htJkswLnwY9E=
+github.com/domainry/domainry-foundation v0.1.20/go.mod h1:pkwel8FFfbVkjAptEDWsA7BxaoPJM8kiQkOwPaIR7eI=
 github.com/domainry/domainry-identity-sdk v0.1.14 h1:g4yA2vBz4YAMC3UEyaiy8VXlFexdqs1HMTsL3N7XIrA=
 github.com/domainry/domainry-identity-sdk v0.1.14/go.mod h1:I3jCembUi1Cg07zWq0h9pFk2fzEcoM224GzMqBNZ00s=
-github.com/domainry/domainry-lifecycle-sdk v0.1.15 h1:dgGpY+HR2kJZ8/4/2Qd4Nce0HTtxj/gvD2qhv6iu7UA=
-github.com/domainry/domainry-lifecycle-sdk v0.1.15/go.mod h1:mWdfmHelw8UbEhpnGQxadWYkW2JxpH7iUYcnSamvBFM=
+github.com/domainry/domainry-lifecycle-sdk v0.1.16 h1:Vjuo3axFvAAFv7NEcm2gs8dVXYKEq00aCBLTlkeMi4Q=
+github.com/domainry/domainry-lifecycle-sdk v0.1.16/go.mod h1:zBx8wUBcC9QpxNS0Z9KcpqfNcsjUjKZbu5kWTysvHzc=
 github.com/domainry/domainry-metadata-sdk v0.1.5 h1:ILu8NpIehWBxJwGPkt5taHoJfUEsdvPunxINE++bX6s=
 github.com/domainry/domainry-metadata-sdk v0.1.5/go.mod h1:vklTpYZZZUHoLGlNwyx/xr/IFfUxWTtz5D4ytYCMBo0=
 github.com/domainry/domainry-orm v0.1.30 h1:5QOtG2qRzV1PhiioS2aKfCoEt9ab3OBucwicHAn/5HQ=

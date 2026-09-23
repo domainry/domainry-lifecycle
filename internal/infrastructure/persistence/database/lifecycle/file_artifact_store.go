@@ -56,7 +56,7 @@ func WithArtifactContentStore(content lifecyclecontract.ArtifactContentStore) Fi
 
 func NewFileArtifactStore(host modulehost.Host, fields lifecyclecontract.UploadFieldCatalog, _ string, options ...FileArtifactStoreOption) *FileArtifactStore {
 	result := &FileArtifactStore{fields: fields, contextErr: func(ctx context.Context) error { return ctx.Err() }}
-	if artifactHost, ok := host.(modulehost.ArtifactStoreHost); ok {
+	if artifactHost, ok := host.(artifactPersistenceHost); ok {
 		result.artifacts = artifactHost.ArtifactStore()
 		result.content = artifactHost.ArtifactContentStore()
 	}
