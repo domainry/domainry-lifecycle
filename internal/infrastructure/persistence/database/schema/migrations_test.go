@@ -1,9 +1,11 @@
 package schema
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/domainry/domainry-foundation/schemaownership"
 	ormdialect "github.com/domainry/domainry-orm/dialect"
 )
 
@@ -23,6 +25,9 @@ func TestPortableSchemaRendersAllSupportedDialects(t *testing.T) {
 			}
 			if len(migrations) != 1 || len(migrations[0].Statements) != len(tables())+len(indexes()) {
 				t.Fatalf("unexpected migration inventory: %#v", migrations)
+			}
+			if migrations[0].Baseline != nil {
+				t.Fatalf("%s Lifecycle migration still carries a legacy schema baseline", name)
 			}
 			joined := strings.Join(migrations[0].Statements, "\n")
 			for _, table := range tables() {
@@ -51,6 +56,57 @@ func TestPortableSchemaRendersAllSupportedDialects(t *testing.T) {
 				t.Fatalf("migration leaked driver branching: %s", joined)
 			}
 		})
+	}
+}
+
+func TestSchemaOwnershipMatchesCanonicalSQLiteDDL(t *testing.T) {
+	dialect, err := ormdialect.New(ormdialect.SQLite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrations, err := Migrations(dialect.WithSchema(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownership := SchemaOwnership()
+	if err := schemaownership.ValidateAll(ownership); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(OwnedTables(), schemaownership.Names(ownership)) {
+		t.Fatalf("Lifecycle owned tables=%v ownership=%+v", OwnedTables(), ownership)
+	}
+	for _, table := range ownership {
+		var create string
+		for _, statement := range migrations[0].Statements {
+			if strings.Contains(statement, `CREATE TABLE IF NOT EXISTS "`+table.Name+`"`) {
+				create = statement
+				break
+			}
+		}
+		if create == "" {
+			t.Fatalf("Lifecycle table %s has ownership but no canonical DDL", table.Name)
+		}
+		quoted := make([]string, len(table.PrimaryKey))
+		for index, column := range table.PrimaryKey {
+			quoted[index] = `"` + column + `"`
+		}
+		if primaryKey := "PRIMARY KEY (" + strings.Join(quoted, ", ") + ")"; !strings.Contains(create, primaryKey) {
+			t.Fatalf("Lifecycle table %s ownership primary key %v does not match DDL: %s", table.Name, table.PrimaryKey, create)
+		}
+	}
+	joined := strings.Join(migrations[0].Statements, "\n")
+	for _, retiredIndex := range []string{"uniq_lifecycle_hold_workspace_identity", "uniq_lifecycle_cleanup_workspace_identity"} {
+		if strings.Contains(joined, retiredIndex) {
+			t.Fatalf("Lifecycle final schema retained redundant identity index %s", retiredIndex)
+		}
+	}
+}
+
+func TestSchemaOwnershipReturnsIndependentValues(t *testing.T) {
+	first, second := SchemaOwnership(), SchemaOwnership()
+	first[0].PrimaryKey[0] = "changed"
+	if second[0].PrimaryKey[0] == "changed" {
+		t.Fatal("Lifecycle ownership primary keys share mutable storage")
 	}
 }
 

@@ -11,7 +11,7 @@ import (
 	schema "github.com/domainry/domainry-lifecycle/internal/infrastructure/persistence/database/schema"
 )
 
-const Owner = "lifecycle"
+const Owner = schema.MigrationOwner
 
 func Migrations(renderer modulehost.Dialect) ([]modulehost.SchemaMigration, error) {
 	return schema.Migrations(renderer)
