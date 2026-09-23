@@ -239,9 +239,10 @@ func newPersistenceTestStore(t *testing.T) (LifecycleStore, *sql.DB) {
 			}
 		}
 	}
+	definitions := newMemoryDefinitionStore()
 	return NewLifecycleStore(persistenceTestHost{
-		db: db, dialect: renderer, definitions: newMemoryDefinitionStore(), artifacts: artifactfixture.NewStore(), content: artifactfixture.NewContent(),
-	}), db
+		db: db, dialect: renderer, definitions: definitions, artifacts: artifactfixture.NewStore(), content: artifactfixture.NewContent(),
+	}, definitions), db
 }
 
 func TestLifecycleStorePushesScopeIntoBusinessAndRelatedResourceQueries(t *testing.T) {

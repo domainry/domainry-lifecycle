@@ -6,6 +6,7 @@ import (
 	"github.com/domainry/domainry-lifecycle-sdk/contract"
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
 	database "github.com/domainry/domainry-lifecycle/internal/infrastructure/persistence/database/lifecycle"
+	metadatasdk "github.com/domainry/domainry-metadata-sdk"
 )
 
 type (
@@ -15,8 +16,8 @@ type (
 	ArchiveWriter           = database.ArchiveWriter
 )
 
-func NewLifecycleStore(host modulehost.Host) LifecycleStore {
-	return database.NewLifecycleStore(host)
+func NewLifecycleStore(host modulehost.Host, definitions metadatasdk.DefinitionStore) LifecycleStore {
+	return database.NewLifecycleStore(host, definitions)
 }
 
 func NewFileArtifactStore(host modulehost.Host, fields contract.UploadFieldCatalog, root string, options ...FileArtifactStoreOption) *FileArtifactStore {

@@ -99,20 +99,66 @@ type integrationMigrationCall struct {
 }
 
 type integrationRegistrar struct {
-	runner *ormmigration.Runner
-	mu     sync.Mutex
-	calls  []integrationMigrationCall
+	database  *sql.DB
+	mu        sync.Mutex
+	calls     []integrationMigrationCall
+	checksums map[string]map[uint]string
 }
 
 func (r *integrationRegistrar) ApplyOwnedMigrations(ctx context.Context, owner string, values []modulehost.SchemaMigration) error {
-	if owner != migration.Owner {
-		return errors.New("unexpected migration owner")
-	}
-	if err := r.runner.Apply(ctx, values); err != nil {
-		return err
-	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if owner != migration.Owner && owner != "metadata" {
+		return errors.New("unexpected migration owner")
+	}
+	if r.checksums == nil {
+		r.checksums = map[string]map[uint]string{}
+	}
+	if _, err := r.database.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS _schema_migrations (owner TEXT NOT NULL, version INTEGER NOT NULL, name TEXT NOT NULL, checksum TEXT NOT NULL, PRIMARY KEY (owner, version))`); err != nil {
+		return err
+	}
+	if r.checksums[owner] == nil {
+		r.checksums[owner] = map[uint]string{}
+	}
+	for _, value := range values {
+		checksum := ormmigration.Checksum(value)
+		if existing, found := r.checksums[owner][value.Version]; found {
+			if existing != checksum {
+				return errors.New("migration checksum drift")
+			}
+			continue
+		}
+		var persisted string
+		err := r.database.QueryRowContext(ctx, `SELECT checksum FROM _schema_migrations WHERE owner=? AND version=?`, owner, value.Version).Scan(&persisted)
+		if err == nil {
+			if persisted != checksum {
+				return errors.New("migration checksum drift")
+			}
+			r.checksums[owner][value.Version] = persisted
+			continue
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		tx, err := r.database.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		for _, statement := range value.Statements {
+			if _, err = tx.ExecContext(ctx, statement); err != nil {
+				_ = tx.Rollback()
+				return err
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO _schema_migrations (owner, version, name, checksum) VALUES (?, ?, ?, ?)`, owner, value.Version, value.Name, checksum); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if err = tx.Commit(); err != nil {
+			return err
+		}
+		r.checksums[owner][value.Version] = checksum
+	}
 	r.calls = append(r.calls, integrationMigrationCall{owner: owner, migrations: append([]modulehost.SchemaMigration(nil), values...)})
 	return nil
 }
@@ -238,18 +284,16 @@ func newIntegrationHost(t *testing.T) integrationHost {
 		t.Fatal(err)
 	}
 	renderer := dialect.WithSchema("")
-	runner, err := ormmigration.NewRunner(db, renderer, ormmigration.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	registrar := &integrationRegistrar{runner: runner}
+	registrar := &integrationRegistrar{database: db}
 	if _, err := db.ExecContext(t.Context(), `CREATE TABLE _audit_events (workspace_id TEXT NOT NULL, id TEXT NOT NULL, family TEXT NOT NULL, event TEXT NOT NULL, object_key TEXT NOT NULL, record_id TEXT NOT NULL, actor_id TEXT NOT NULL, summary TEXT NOT NULL, metadata_json TEXT NOT NULL, after_json TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (workspace_id,id))`); err != nil {
 		t.Fatal(err)
 	}
-	return integrationHost{
-		db: db, dialect: renderer, registrar: registrar, transactions: integrationTransactor{db: db}, definitions: newIntegrationDefinitionStore(t, db),
+	host := integrationHost{
+		db: db, dialect: renderer, registrar: registrar, transactions: integrationTransactor{db: db},
 		audit: &integrationAudit{db: db}, artifacts: artifactfixture.NewStore(), content: artifactfixture.NewContent(),
 	}
+	host.definitions = newIntegrationDefinitionStore(t, host)
+	return host
 }
 
 func integrationIdentityContext(ctx context.Context, principal lifecycleaccess.Principal, scope identitysdk.DataScope) context.Context {
@@ -329,11 +373,11 @@ func TestBindingOwnsApplicationPersistenceAndHostTransaction(t *testing.T) {
 		t.Fatalf("retired Lifecycle audit tables=%d err=%v", retiredAuditTables, err)
 	}
 	var migrationRows int
-	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _schema_migrations").Scan(&migrationRows); err != nil || migrationRows != 2 {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _schema_migrations").Scan(&migrationRows); err != nil || migrationRows != 3 {
 		t.Fatalf("migration ledger rows=%d err=%v", migrationRows, err)
 	}
 	calls := host.registrar.snapshot()
-	if len(calls) != 1 || calls[0].owner != migration.Owner || len(calls[0].migrations) != 2 {
+	if len(calls) != 3 || calls[0].owner != "metadata" || calls[1].owner != migration.Owner || calls[2].owner != "metadata" || len(calls[1].migrations) != 2 {
 		t.Fatalf("host migration registrations=%#v", calls)
 	}
 	for table, expected := range map[string]int{"_subject_requests": 1, "_lifecycle_subject_requests": 0} {
@@ -369,16 +413,16 @@ func TestModuleSubjectExportBusinessContractEndToEnd(t *testing.T) {
 	}
 	_ = reopened.Close(t.Context())
 	calls := host.registrar.snapshot()
-	if len(calls) != 2 {
+	if len(calls) != 5 {
 		t.Fatalf("host migration registrations=%d", len(calls))
 	}
 	for _, call := range calls {
-		if call.owner != migration.Owner || len(call.migrations) != 2 {
+		if call.owner != migration.Owner && call.owner != "metadata" {
 			t.Fatalf("host migration registration=%#v", call)
 		}
 	}
 	var migrationRows, migrationLedgers int
-	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _schema_migrations").Scan(&migrationRows); err != nil || migrationRows != 2 {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _schema_migrations").Scan(&migrationRows); err != nil || migrationRows != 3 {
 		t.Fatalf("migration ledger rows=%d err=%v", migrationRows, err)
 	}
 	// SQLite's catalog is used only as dialect-focused integration evidence;
@@ -729,7 +773,7 @@ func TestDeletionReplayPreflightsWholeBatchBeforeOwnerSideEffects(t *testing.T) 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	store := lifecyclestore.NewLifecycleStore(host)
+	store := lifecyclestore.NewLifecycleStore(host, host.definitions)
 	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
 	for _, request := range []internalmodel.SubjectRequest{
 		{ID: "request-a", WorkspaceID: "workspace-a", Kind: internalmodel.SubjectRequestErase, Status: internalmodel.SubjectRequestSucceeded, SubjectID: "subject-a", ResolvedIdentity: "identity-a", RequestedBy: "requester", BackupPending: true, ResultReference: "erase-evidence:request-a", CreatedAt: now, UpdatedAt: now},

@@ -44,12 +44,7 @@ type LifecycleStore struct {
 	content     lifecyclecontract.ArtifactContentStore
 }
 
-func NewLifecycleStore(store modulehost.Host) LifecycleStore {
-	definitionHost, _ := store.(modulehost.DefinitionStoreHost)
-	var definitions metadatasdk.DefinitionStore
-	if definitionHost != nil {
-		definitions = definitionHost.DefinitionStore()
-	}
+func NewLifecycleStore(store modulehost.Host, definitions metadatasdk.DefinitionStore) LifecycleStore {
 	auditHost, _ := store.(modulehost.AuditStoreHost)
 	var auditAppender auditcontract.Appender
 	var auditWithin auditcontract.TransactionalAppender

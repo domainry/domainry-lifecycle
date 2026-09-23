@@ -21,6 +21,7 @@ import (
 	internalmodel "github.com/domainry/domainry-lifecycle/internal/domain/lifecycle/model"
 	infra "github.com/domainry/domainry-lifecycle/internal/infrastructure/persistence"
 	modulehttptransport "github.com/domainry/domainry-lifecycle/internal/transport/http/module"
+	metadatasdk "github.com/domainry/domainry-metadata-sdk"
 )
 
 type Binding struct {
@@ -33,8 +34,8 @@ type Binding struct {
 	bound      bool
 }
 
-func NewBinding(host modulehost.Host) (*Binding, error) {
-	return &Binding{repository: infra.NewLifecycleStore(host), host: host}, nil
+func NewBinding(host modulehost.Host, definitions metadatasdk.DefinitionStore) (*Binding, error) {
+	return &Binding{repository: infra.NewLifecycleStore(host, definitions), host: host}, nil
 }
 
 func (*Binding) Descriptor() sdk.Descriptor {

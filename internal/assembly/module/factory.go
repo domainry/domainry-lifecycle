@@ -10,6 +10,9 @@ import (
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
 	lifecyclesdkadapter "github.com/domainry/domainry-lifecycle/internal/adapter/lifecyclesdk"
 	persistence "github.com/domainry/domainry-lifecycle/internal/infrastructure/persistence"
+	metadatasdk "github.com/domainry/domainry-metadata-sdk"
+	metadatamodulehost "github.com/domainry/domainry-metadata-sdk/modulehost"
+	metadatamodule "github.com/domainry/domainry-metadata/module"
 )
 
 type Options struct{}
@@ -27,10 +30,6 @@ func (*Factory) OpenModule(ctx context.Context, application lifecyclesdk.Applica
 	if host == nil || host.Database() == nil || host.Dialect() == nil || host.Migrations() == nil || host.Transactions() == nil {
 		return nil, fmt.Errorf("Lifecycle module requires database, dialect, migrations, and transactions")
 	}
-	definitionHost, ok := host.(modulehost.DefinitionStoreHost)
-	if !ok || definitionHost.DefinitionStore() == nil {
-		return nil, fmt.Errorf("Lifecycle shared Definition store is required")
-	}
 	auditHost, ok := host.(modulehost.AuditStoreHost)
 	if !ok || auditHost.AuditAppender() == nil || auditHost.AuditTransactionalAppender() == nil {
 		return nil, fmt.Errorf("Lifecycle shared Audit appenders are required")
@@ -42,7 +41,27 @@ func (*Factory) OpenModule(ctx context.Context, application lifecyclesdk.Applica
 	if err := persistence.ApplySchema(ctx, host); err != nil {
 		return nil, err
 	}
-	return lifecyclesdkadapter.NewBinding(host)
+	definitions, err := metadatamodule.OpenDefinitionStore(ctx, metadatasdk.ApplicationRef{InstallationID: application.RuntimeID}, lifecycleMetadataHost{host: host})
+	if err != nil {
+		return nil, fmt.Errorf("open Lifecycle Definition persistence: %w", err)
+	}
+	return lifecyclesdkadapter.NewBinding(host, definitions)
+}
+
+type lifecycleMetadataHost struct{ host modulehost.Host }
+
+func (h lifecycleMetadataHost) Database() metadatamodulehost.Database { return h.host.Database() }
+func (h lifecycleMetadataHost) Dialect() metadatamodulehost.Dialect   { return h.host.Dialect() }
+func (h lifecycleMetadataHost) Migrations() metadatamodulehost.MigrationRegistrar {
+	return lifecycleMetadataMigrations{host: h.host}
+}
+
+type lifecycleMetadataMigrations struct{ host modulehost.Host }
+
+func (m lifecycleMetadataMigrations) Driver() string { return string(m.host.Dialect().Name()) }
+func (lifecycleMetadataMigrations) Schema() string   { return "" }
+func (m lifecycleMetadataMigrations) ApplyOwnedMigrations(ctx context.Context, owner string, migrations []metadatamodulehost.SchemaMigration) error {
+	return m.host.Migrations().ApplyOwnedMigrations(ctx, owner, migrations)
 }
 
 var _ lifecyclesdk.Factory = (*Factory)(nil)
