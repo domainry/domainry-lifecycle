@@ -6,13 +6,12 @@ import (
 	"context"
 	"fmt"
 
+	shareddefinition "github.com/domainry/domainry-foundation/definition"
 	lifecyclesdk "github.com/domainry/domainry-lifecycle-sdk"
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
 	lifecyclesdkadapter "github.com/domainry/domainry-lifecycle/internal/adapter/lifecyclesdk"
 	persistence "github.com/domainry/domainry-lifecycle/internal/infrastructure/persistence"
 	metadatasdk "github.com/domainry/domainry-metadata-sdk"
-	metadatamodulehost "github.com/domainry/domainry-metadata-sdk/modulehost"
-	metadatamodule "github.com/domainry/domainry-metadata/module"
 )
 
 type Options struct{}
@@ -41,26 +40,19 @@ func (*Factory) OpenModule(ctx context.Context, application lifecyclesdk.Applica
 	if err := persistence.ApplySchema(ctx, host); err != nil {
 		return nil, err
 	}
-	definitions, err := metadatamodule.OpenDefinitionStore(ctx, metadatasdk.ApplicationRef{InstallationID: application.RuntimeID}, lifecycleMetadataHost{host: host})
+	definitionKernel, err := shareddefinition.Open(ctx, application.RuntimeID, host.Database(), host.Dialect(), lifecycleDefinitionMigrations{host: host})
 	if err != nil {
 		return nil, fmt.Errorf("open Lifecycle Definition persistence: %w", err)
 	}
+	definitions := metadatasdk.AdaptDefinitionStore(definitionKernel)
 	return lifecyclesdkadapter.NewBinding(host, definitions)
 }
 
-type lifecycleMetadataHost struct{ host modulehost.Host }
+type lifecycleDefinitionMigrations struct{ host modulehost.Host }
 
-func (h lifecycleMetadataHost) Database() metadatamodulehost.Database { return h.host.Database() }
-func (h lifecycleMetadataHost) Dialect() metadatamodulehost.Dialect   { return h.host.Dialect() }
-func (h lifecycleMetadataHost) Migrations() metadatamodulehost.MigrationRegistrar {
-	return lifecycleMetadataMigrations{host: h.host}
-}
-
-type lifecycleMetadataMigrations struct{ host modulehost.Host }
-
-func (m lifecycleMetadataMigrations) Driver() string { return string(m.host.Dialect().Name()) }
-func (lifecycleMetadataMigrations) Schema() string   { return "" }
-func (m lifecycleMetadataMigrations) ApplyOwnedMigrations(ctx context.Context, owner string, migrations []metadatamodulehost.SchemaMigration) error {
+func (m lifecycleDefinitionMigrations) Driver() string { return string(m.host.Dialect().Name()) }
+func (lifecycleDefinitionMigrations) Schema() string   { return "" }
+func (m lifecycleDefinitionMigrations) ApplyOwnedMigrations(ctx context.Context, owner string, migrations []shareddefinition.SchemaMigration) error {
 	return m.host.Migrations().ApplyOwnedMigrations(ctx, owner, migrations)
 }
 

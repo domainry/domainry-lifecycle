@@ -14,6 +14,7 @@ import (
 	auditcontract "github.com/domainry/domainry-audit-sdk/contract"
 	actioncontract "github.com/domainry/domainry-foundation/action"
 	sharedartifact "github.com/domainry/domainry-foundation/artifact"
+	shareddefinition "github.com/domainry/domainry-foundation/definition"
 	"github.com/domainry/domainry-foundation/modulehttp"
 	identitysdk "github.com/domainry/domainry-identity-sdk"
 	lifecyclesdk "github.com/domainry/domainry-lifecycle-sdk"
@@ -108,7 +109,7 @@ type integrationRegistrar struct {
 func (r *integrationRegistrar) ApplyOwnedMigrations(ctx context.Context, owner string, values []modulehost.SchemaMigration) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if owner != migration.Owner && owner != "metadata" {
+	if owner != migration.Owner && owner != shareddefinition.MigrationOwner {
 		return errors.New("unexpected migration owner")
 	}
 	if r.checksums == nil {
@@ -377,7 +378,7 @@ func TestBindingOwnsApplicationPersistenceAndHostTransaction(t *testing.T) {
 		t.Fatalf("migration ledger rows=%d err=%v", migrationRows, err)
 	}
 	calls := host.registrar.snapshot()
-	if len(calls) != 3 || calls[0].owner != "metadata" || calls[1].owner != migration.Owner || calls[2].owner != "metadata" || len(calls[1].migrations) != 2 {
+	if len(calls) != 3 || calls[0].owner != shareddefinition.MigrationOwner || calls[1].owner != migration.Owner || calls[2].owner != shareddefinition.MigrationOwner || len(calls[1].migrations) != 2 {
 		t.Fatalf("host migration registrations=%#v", calls)
 	}
 	for table, expected := range map[string]int{"_subject_requests": 1, "_lifecycle_subject_requests": 0} {
@@ -417,7 +418,7 @@ func TestModuleSubjectExportBusinessContractEndToEnd(t *testing.T) {
 		t.Fatalf("host migration registrations=%d", len(calls))
 	}
 	for _, call := range calls {
-		if call.owner != migration.Owner && call.owner != "metadata" {
+		if call.owner != migration.Owner && call.owner != shareddefinition.MigrationOwner {
 			t.Fatalf("host migration registration=%#v", call)
 		}
 	}

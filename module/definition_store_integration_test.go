@@ -3,9 +3,8 @@ package module
 import (
 	"context"
 
+	shareddefinition "github.com/domainry/domainry-foundation/definition"
 	metadatasdk "github.com/domainry/domainry-metadata-sdk"
-	metadatamodulehost "github.com/domainry/domainry-metadata-sdk/modulehost"
-	metadatamodule "github.com/domainry/domainry-metadata/module"
 )
 
 // newIntegrationDefinitionStore deliberately opens a second Store instance
@@ -16,25 +15,17 @@ func newIntegrationDefinitionStore(t interface {
 	Fatal(...any)
 }, host integrationHost) metadatasdk.DefinitionStore {
 	t.Helper()
-	store, err := metadatamodule.OpenDefinitionStore(context.Background(), metadatasdk.ApplicationRef{InstallationID: "integration-test"}, integrationMetadataHost{host: host})
+	store, err := shareddefinition.Open(context.Background(), "integration-test", host.db, host.dialect, integrationDefinitionMigrations{host: host})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return store
+	return metadatasdk.AdaptDefinitionStore(store)
 }
 
-type integrationMetadataHost struct{ host integrationHost }
+type integrationDefinitionMigrations struct{ host integrationHost }
 
-func (h integrationMetadataHost) Database() metadatamodulehost.Database { return h.host.db }
-func (h integrationMetadataHost) Dialect() metadatamodulehost.Dialect   { return h.host.dialect }
-func (h integrationMetadataHost) Migrations() metadatamodulehost.MigrationRegistrar {
-	return integrationMetadataMigrations{host: h.host}
-}
-
-type integrationMetadataMigrations struct{ host integrationHost }
-
-func (integrationMetadataMigrations) Driver() string { return "sqlite" }
-func (integrationMetadataMigrations) Schema() string { return "" }
-func (m integrationMetadataMigrations) ApplyOwnedMigrations(ctx context.Context, owner string, migrations []metadatamodulehost.SchemaMigration) error {
+func (integrationDefinitionMigrations) Driver() string { return "sqlite" }
+func (integrationDefinitionMigrations) Schema() string { return "" }
+func (m integrationDefinitionMigrations) ApplyOwnedMigrations(ctx context.Context, owner string, migrations []shareddefinition.SchemaMigration) error {
 	return m.host.registrar.ApplyOwnedMigrations(ctx, owner, migrations)
 }
