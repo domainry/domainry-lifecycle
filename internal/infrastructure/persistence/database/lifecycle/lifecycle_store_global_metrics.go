@@ -39,11 +39,9 @@ func (s LifecycleStore) GlobalMetrics(ctx context.Context, scope lifecycleaccess
 	if err := s.database(ctx).QueryRowContext(ctx, queryValue, args...).Scan(&metrics.LegalHoldCount); err != nil {
 		return metrics, err
 	}
-	queryValue, args, buildErr = query.NewSelectBuilder(s.renderer, "_lifecycle_audit_evidence").Columns("event", "payload_json").Where(
-		query.In("event", "lifecycle.cleanup.succeeded", "lifecycle.cleanup.failed"),
-	).Build()
+	queryValue, args, buildErr = query.NewSelectBuilder(s.renderer, "_lifecycle_cleanup_jobs").Columns("payload_json").Build()
 	if buildErr != nil {
-		return metrics, fmt.Errorf("build lifecycle audit metrics query: %w", buildErr)
+		return metrics, fmt.Errorf("build lifecycle cleanup result metrics query: %w", buildErr)
 	}
 	rows, err := s.database(ctx).QueryContext(ctx, queryValue, args...)
 	if err != nil {
@@ -51,18 +49,17 @@ func (s LifecycleStore) GlobalMetrics(ctx context.Context, scope lifecycleaccess
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var event, payload string
-		if err := rows.Scan(&event, &payload); err != nil {
+		var payload string
+		if err := rows.Scan(&payload); err != nil {
 			return metrics, err
 		}
-		if event == "lifecycle.cleanup.failed" {
-			metrics.FailureTotal++
+		var job lifecyclemodel.CleanupJob
+		if json.Unmarshal([]byte(payload), &job) != nil {
 			continue
 		}
-		var evidence lifecyclemodel.AuditEvidence
-		var job lifecyclemodel.CleanupJob
-		if json.Unmarshal([]byte(payload), &evidence) == nil && json.Unmarshal(evidence.Payload, &job) == nil {
-			metrics.PurgedTotal += job.Purged
+		metrics.PurgedTotal += job.Purged
+		if job.Status == lifecyclemodel.CleanupStatusFailed {
+			metrics.FailureTotal++
 		}
 	}
 	if err := rows.Err(); err != nil {

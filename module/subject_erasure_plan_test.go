@@ -82,7 +82,7 @@ func TestSubjectErasurePersistsAllPlansBeforeEffectsAndReusesThemAfterFailure(t 
 	checkPlans := func() {
 		t.Helper()
 		var count int
-		if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _lifecycle_subject_execution_steps WHERE workspace_id = ? AND request_id = ? AND operation = ?", "workspace-a", request.ID, "erase_plan").Scan(&count); err != nil || count != 3 {
+		if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _subject_steps WHERE workspace_id = ? AND request_id = ? AND operation = ?", "workspace-a", request.ID, "erase_plan").Scan(&count); err != nil || count != 3 {
 			t.Fatalf("effects started before all plans committed: %d %v", count, err)
 		}
 	}

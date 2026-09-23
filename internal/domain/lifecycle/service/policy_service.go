@@ -231,6 +231,7 @@ func DefaultPolicyCatalog(workspaceID, publisher string, now time.Time) []lifecy
 		{"automation.execution.v1", "automation", lifecyclemodel.RetentionClassProduct, year, 90 * day, []lifecyclemodel.Sensitivity{lifecyclemodel.SensitivitySensitive}, standard, anonymize},
 		{"scheduler.execution.v1", "scheduler", lifecyclemodel.RetentionClassProduct, year, 90 * day, []lifecyclemodel.Sensitivity{lifecyclemodel.SensitivityAudit}, standard, anonymize},
 		{"execution.idempotency_receipt.v1", "action", lifecyclemodel.RetentionClassTechnical, 30 * day, 7 * day, []lifecyclemodel.Sensitivity{lifecyclemodel.SensitivitySecurity}, standard, deleteBehavior},
+		{"operations.technical_receipt.v1", "operations", lifecyclemodel.RetentionClassTechnical, 30 * day, 7 * day, []lifecyclemodel.Sensitivity{lifecyclemodel.SensitivitySecurity}, standard, deleteBehavior},
 		{"operations.receipt.v1", "operations", lifecyclemodel.RetentionClassLegalAudit, 7 * year, 90 * day, []lifecyclemodel.Sensitivity{lifecyclemodel.SensitivityAudit, lifecyclemodel.SensitivitySecurity}, locked, protected},
 		{"operations.control.v1", "operations", lifecyclemodel.RetentionClassLegalAudit, 7 * year, year, []lifecyclemodel.Sensitivity{lifecyclemodel.SensitivityAudit, lifecyclemodel.SensitivitySecurity}, locked, protected},
 		{"operations.break_glass.v1", "operations", lifecyclemodel.RetentionClassLegalAudit, 7 * year, year, []lifecyclemodel.Sensitivity{lifecyclemodel.SensitivityAudit, lifecyclemodel.SensitivitySecurity}, locked, protected},
@@ -253,8 +254,10 @@ func DefaultPolicyCatalog(workspaceID, publisher string, now time.Time) []lifecy
 		statusRetention := map[string]time.Duration{}
 		replayWindow := time.Duration(0)
 		switch entry.key {
-		case "workflow.receipt.v1", "execution.idempotency_receipt.v1":
+		case "workflow.receipt.v1", "execution.idempotency_receipt.v1", "operations.technical_receipt.v1":
 			replayWindow = 7 * day
+		case "operations.receipt.v1":
+			statusRetention = map[string]time.Duration{"succeeded": year, "failed": 7 * year}
 		case "workflow.execution.v1":
 			statusRetention = map[string]time.Duration{"succeeded": 7 * year, "failed": 7 * year}
 		case "automation.execution.v1":

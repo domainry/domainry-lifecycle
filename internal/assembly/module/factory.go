@@ -8,7 +8,6 @@ import (
 
 	lifecyclesdk "github.com/domainry/domainry-lifecycle-sdk"
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
-	lifecyclecapability "github.com/domainry/domainry-lifecycle/capability"
 	lifecyclesdkadapter "github.com/domainry/domainry-lifecycle/internal/adapter/lifecyclesdk"
 	persistence "github.com/domainry/domainry-lifecycle/internal/infrastructure/persistence"
 )
@@ -28,14 +27,22 @@ func (*Factory) OpenModule(ctx context.Context, application lifecyclesdk.Applica
 	if host == nil || host.Database() == nil || host.Dialect() == nil || host.Migrations() == nil || host.Transactions() == nil {
 		return nil, fmt.Errorf("Lifecycle module requires database, dialect, migrations, and transactions")
 	}
+	definitionHost, ok := host.(modulehost.DefinitionStoreHost)
+	if !ok || definitionHost.DefinitionStore() == nil {
+		return nil, fmt.Errorf("Lifecycle shared Definition store is required")
+	}
+	auditHost, ok := host.(modulehost.AuditStoreHost)
+	if !ok || auditHost.AuditAppender() == nil || auditHost.AuditTransactionalAppender() == nil {
+		return nil, fmt.Errorf("Lifecycle shared Audit appenders are required")
+	}
+	artifactHost, ok := host.(modulehost.ArtifactStoreHost)
+	if !ok || artifactHost.ArtifactStore() == nil || artifactHost.ArtifactContentStore() == nil || artifactHost.ArtifactContentWriter() == nil {
+		return nil, fmt.Errorf("Lifecycle shared Artifact store and content ports are required")
+	}
 	if err := persistence.ApplySchema(ctx, host); err != nil {
 		return nil, err
 	}
-	capability, err := lifecyclecapability.Open(lifecyclecapability.Inputs{})
-	if err != nil {
-		return nil, fmt.Errorf("build Lifecycle capability disclosure: %w", err)
-	}
-	return lifecyclesdkadapter.NewBinding(host, capability)
+	return lifecyclesdkadapter.NewBinding(host)
 }
 
 var _ lifecyclesdk.Factory = (*Factory)(nil)

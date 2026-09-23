@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,14 +21,7 @@ const lifecycleSubjectFileLimit = 5 << 20
 
 type SubjectStore struct {
 	uploadRoot string
-	directory  string
 	content    lifecyclecontract.ArtifactContentStore
-}
-
-type lifecycleSubjectArtifact struct {
-	WorkspaceID string          `json:"workspace_id"`
-	ExpiresAt   time.Time       `json:"expires_at"`
-	Payload     json.RawMessage `json:"payload"`
 }
 
 func NewSubjectStore(directory string, content ...lifecyclecontract.ArtifactContentStore) *SubjectStore {
@@ -37,103 +29,7 @@ func NewSubjectStore(directory string, content ...lifecyclecontract.ArtifactCont
 	if len(content) > 0 {
 		storage = content[0]
 	}
-	return &SubjectStore{uploadRoot: directory, directory: filepath.Join(directory, "lifecycle-exports"), content: storage}
-}
-
-func (s *SubjectStore) PutSubjectExport(ctx context.Context, workspaceID, requestID string, payload json.RawMessage, expiresAt time.Time) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(workspaceID) == "" || strings.TrimSpace(requestID) == "" || !expiresAt.After(time.Now().UTC()) {
-		return "", fmt.Errorf("subject export scope and future expiry required")
-	}
-	if err := localMkdirAll(s.directory, 0o700); err != nil {
-		return "", err
-	}
-	// The request ID is the retry identity. Rewriting the same path after a
-	// process crash is safe and prevents orphaned duplicate exports.
-	reference := requestID + "-export"
-	raw, err := json.Marshal(lifecycleSubjectArtifact{WorkspaceID: workspaceID, ExpiresAt: expiresAt, Payload: payload})
-	if err != nil {
-		return "", err
-	}
-	temporary, err := localCreateTemp(s.directory, ".lifecycle-export-*")
-	if err != nil {
-		return "", err
-	}
-	temporaryName := temporary.Name()
-	defer localRemove(temporaryName)
-	if err := temporary.Chmod(0o600); err != nil {
-		_ = temporary.Close()
-		return "", err
-	}
-	if _, err := temporary.Write(raw); err != nil {
-		_ = temporary.Close()
-		return "", err
-	}
-	if err := temporary.Sync(); err != nil {
-		_ = temporary.Close()
-		return "", err
-	}
-	if err := temporary.Close(); err != nil {
-		return "", err
-	}
-	if err := localRename(temporaryName, filepath.Join(s.directory, reference+".json")); err != nil {
-		return "", err
-	}
-	return reference, nil
-}
-
-func (s *SubjectStore) ReadSubjectExport(ctx context.Context, workspaceID, reference string, now time.Time) (json.RawMessage, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	path, err := s.path(reference)
-	if err != nil {
-		return nil, err
-	}
-	raw, err := localReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var artifact lifecycleSubjectArtifact
-	if err := json.Unmarshal(raw, &artifact); err != nil {
-		return nil, err
-	}
-	if artifact.WorkspaceID != workspaceID || !now.Before(artifact.ExpiresAt) {
-		return nil, fmt.Errorf("subject export unavailable or expired")
-	}
-	return artifact.Payload, nil
-}
-
-func (s *SubjectStore) DeleteExpiredSubjectExports(ctx context.Context, now time.Time) (int, error) {
-	entries, err := localReadDir(s.directory)
-	if os.IsNotExist(err) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, err
-	}
-	deleted := 0
-	for _, entry := range entries {
-		if err := ctx.Err(); err != nil {
-			return deleted, err
-		}
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-			continue
-		}
-		path := filepath.Join(s.directory, entry.Name())
-		raw, readErr := localReadFile(path)
-		var artifact lifecycleSubjectArtifact
-		if readErr != nil || json.Unmarshal(raw, &artifact) != nil || now.Before(artifact.ExpiresAt) {
-			continue
-		}
-		if removeErr := localRemove(path); removeErr != nil {
-			return deleted, removeErr
-		}
-		deleted++
-	}
-	return deleted, nil
+	return &SubjectStore{uploadRoot: directory, content: storage}
 }
 
 // DeleteExpiredUploadStaging removes only interrupted upload temporary files.
@@ -302,12 +198,4 @@ func subjectFileIdentity(reference lifecyclecontract.SubjectFileReference) (stri
 		return "", "", fmt.Errorf("invalid subject file reference")
 	}
 	return workspace.String(), filename, nil
-}
-
-func (s *SubjectStore) path(reference string) (string, error) {
-	reference = strings.TrimSpace(reference)
-	if reference == "" || filepath.Base(reference) != reference || strings.Contains(reference, "..") {
-		return "", fmt.Errorf("invalid subject export reference")
-	}
-	return filepath.Join(s.directory, reference+".json"), nil
 }

@@ -75,12 +75,22 @@ func TestSubjectTransitionRequiresIndependentApprovalAndExecutionEvidence(t *tes
 
 func TestDefaultPolicyCatalogIsComplete(t *testing.T) {
 	catalog := DefaultPolicyCatalog("workspace-a", "admin", time.Now().UTC())
-	if len(catalog) != 24 {
+	if len(catalog) != 25 {
 		t.Fatalf("catalog entries=%d", len(catalog))
 	}
+	policies := map[string]lifecyclemodel.RetentionPolicy{}
 	for _, version := range catalog {
 		if err := ValidatePolicyPublication(nil, version); err != nil {
 			t.Fatalf("policy %s: %v", version.Policy.Key, err)
 		}
+		policies[version.Policy.Key] = version.Policy
+	}
+	technical := policies["operations.technical_receipt.v1"]
+	legal := policies["operations.receipt.v1"]
+	if technical.Class != lifecyclemodel.RetentionClassTechnical || technical.DefaultRetention != 30*24*time.Hour || technical.ReplayWindow != 7*24*time.Hour {
+		t.Fatalf("technical Operations policy=%#v", technical)
+	}
+	if legal.Class != lifecyclemodel.RetentionClassLegalAudit || legal.StatusRetention["succeeded"] != 365*24*time.Hour || legal.StatusRetention["failed"] != 7*365*24*time.Hour {
+		t.Fatalf("legal Operations policy=%#v", legal)
 	}
 }

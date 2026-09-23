@@ -2,9 +2,7 @@ package lifecycle
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -13,25 +11,51 @@ import (
 	"github.com/domainry/domainry-orm/query"
 )
 
+const (
+	subjectRequestsTable         = "_subject_requests"
+	subjectExecutionStepsTable   = "_subject_steps"
+	subjectErasureFenceOwner     = "lifecycle"
+	subjectErasureFenceOperation = "erase_fence"
+)
+
+func subjectErasureRequestIDs(renderer modulehost.Dialect, workspaceID, subjectID string) *query.SelectBuilder {
+	return query.NewWorkspaceSelectBuilder(renderer, subjectRequestsTable, workspaceID).Columns("id").Where(query.And(
+		query.NotEqual("request_type", model.SubjectRequestTypeExternalErase),
+		query.Equal("kind", model.SubjectRequestErase),
+		query.Equal("resolved_identity", subjectID),
+	))
+}
+
+func subjectErasureFenceRequests(renderer modulehost.Dialect, workspaceID, subjectID string) *query.SelectBuilder {
+	return query.NewWorkspaceSelectBuilder(renderer, subjectExecutionStepsTable, workspaceID).Columns("request_id").Where(query.And(
+		query.Equal("owner", subjectErasureFenceOwner),
+		query.Equal("operation", subjectErasureFenceOperation),
+		query.InSubquery("request_id", subjectErasureRequestIDs(renderer, workspaceID, subjectID)),
+	))
+}
+
 func (s LifecycleStore) CheckSubjectExportAllowed(ctx context.Context, workspaceID, subjectID string) error {
-	statement, args, err := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_subject_erasure_fences", workspaceID).Columns("request_id").Where(query.Equal("subject_id", subjectID)).Build()
+	statement, args, err := subjectErasureFenceRequests(s.renderer, workspaceID, subjectID).Limit(1).Build()
 	if err != nil {
 		return err
 	}
-	var requestID string
-	err = s.database(ctx).QueryRowContext(ctx, statement, args...).Scan(&requestID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
+	rows, err := s.database(ctx).QueryContext(ctx, statement, args...)
 	if err != nil {
 		return err
 	}
-	return fmt.Errorf("subject export blocked by erasure")
+	defer rows.Close()
+	if rows.Next() {
+		return fmt.Errorf("subject export blocked by erasure")
+	}
+	return rows.Err()
 }
 
 func (s LifecycleStore) subjectRequestsForErasure(ctx context.Context, workspaceID, subjectID string) ([]model.SubjectRequest, error) {
-	statement, args, err := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_subject_requests", workspaceID).Columns("payload_json").
-		Where(query.Or(query.Equal("resolved_identity", subjectID), query.Equal("subject_id", subjectID))).OrderBy(query.Ascending("id")).Build()
+	statement, args, err := query.NewWorkspaceSelectBuilder(s.renderer, subjectRequestsTable, workspaceID).Columns("payload_json").
+		Where(query.And(
+			query.NotEqual("request_type", model.SubjectRequestTypeExternalErase),
+			query.Or(query.Equal("resolved_identity", subjectID), query.Equal("subject_id", subjectID)),
+		)).OrderBy(query.Ascending("id")).Build()
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +92,11 @@ func (s LifecycleStore) BeginSubjectErasure(ctx context.Context, requestID, work
 		if err != nil {
 			return err
 		}
+		requestFound := false
 		for _, request := range requests {
+			if request.ID == requestID && request.Kind == model.SubjectRequestErase && request.ResolvedIdentity == subjectID {
+				requestFound = true
+			}
 			if request.Kind != model.SubjectRequestExport {
 				continue
 			}
@@ -81,24 +109,48 @@ func (s LifecycleStore) BeginSubjectErasure(ctx context.Context, requestID, work
 			}
 			refs = append(refs, model.SubjectExportReference{RequestID: request.ID, Reference: reference})
 		}
-		statement, args, err := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_subject_erasure_fences", workspaceID).Columns("request_id").Where(query.Equal("subject_id", subjectID)).Build()
+		if !requestFound {
+			return fmt.Errorf("subject erasure request does not own resolved identity")
+		}
+		statement, args, err := subjectErasureFenceRequests(s.renderer, workspaceID, subjectID).Build()
 		if err != nil {
 			return err
 		}
-		var existing string
-		err = s.database(txctx).QueryRowContext(txctx, statement, args...).Scan(&existing)
-		if err == nil {
+		rows, err := s.database(txctx).QueryContext(txctx, statement, args...)
+		if err != nil {
+			return err
+		}
+		fenced := false
+		for rows.Next() {
+			var existing string
+			if err = rows.Scan(&existing); err != nil {
+				rows.Close()
+				return err
+			}
+			if existing != requestID {
+				rows.Close()
+				return fmt.Errorf("subject erasure already fenced by another request")
+			}
+			fenced = true
+		}
+		if err = rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		if fenced {
 			return nil
 		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		statement, args, err = query.NewWorkspaceInsertBuilder(s.renderer, "_lifecycle_subject_erasure_fences", workspaceID).Columns("subject_id", "request_id").Values(subjectID, requestID).Build()
+		payload, err := json.Marshal(struct {
+			SubjectID string `json:"subject_id"`
+		}{SubjectID: subjectID})
 		if err != nil {
 			return err
 		}
-		_, err = s.database(txctx).ExecContext(txctx, statement, args...)
-		return err
+		return s.SaveSubjectExecutionStep(txctx, model.SubjectExecutionStep{
+			WorkspaceID: workspaceID, RequestID: requestID, Owner: subjectErasureFenceOwner,
+			Operation: subjectErasureFenceOperation, Payload: payload, CompletedAt: time.Now().UTC(),
+		})
 	})
 	return refs, err
 }
@@ -111,13 +163,6 @@ func (s LifecycleStore) EraseSubjectRequestData(ctx context.Context, requestID, 
 		}
 		for _, request := range requests {
 			if request.ID == requestID {
-				statement, args, err := query.NewWorkspaceUpdateBuilder(s.renderer, "_lifecycle_audit_evidence", workspaceID).Set("payload_json", "{}").Where(query.Equal("resource_id", request.ID)).Build()
-				if err != nil {
-					return err
-				}
-				if _, err = s.database(txctx).ExecContext(txctx, statement, args...); err != nil {
-					return err
-				}
 				continue
 			}
 			if request.Kind == model.SubjectRequestExport && request.Status == model.SubjectRequestExecuting {
@@ -139,20 +184,13 @@ func (s LifecycleStore) EraseSubjectRequestData(ctx context.Context, requestID, 
 				return err
 			}
 			if request.Kind == model.SubjectRequestExport {
-				statement, args, err := query.NewWorkspaceDeleteBuilder(s.renderer, "_lifecycle_subject_execution_steps", workspaceID).Where(query.Equal("request_id", request.ID)).Build()
+				statement, args, err := query.NewWorkspaceDeleteBuilder(s.renderer, subjectExecutionStepsTable, workspaceID).Where(query.Equal("request_id", request.ID)).Build()
 				if err != nil {
 					return err
 				}
 				if _, err = s.database(txctx).ExecContext(txctx, statement, args...); err != nil {
 					return err
 				}
-			}
-			statement, args, err := query.NewWorkspaceUpdateBuilder(s.renderer, "_lifecycle_audit_evidence", workspaceID).Set("payload_json", "{}").Where(query.Equal("resource_id", request.ID)).Build()
-			if err != nil {
-				return err
-			}
-			if _, err = s.database(txctx).ExecContext(txctx, statement, args...); err != nil {
-				return err
 			}
 		}
 		return nil

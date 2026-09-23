@@ -2,9 +2,7 @@ package lifecycle
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -12,6 +10,7 @@ import (
 	"github.com/domainry/domainry-lifecycle-sdk/contract"
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
 	model "github.com/domainry/domainry-lifecycle/internal/domain/lifecycle/model"
+	lifecyclepersistence "github.com/domainry/domainry-lifecycle/internal/domain/lifecycle/repository"
 	"github.com/domainry/domainry-orm/query"
 )
 
@@ -19,36 +18,37 @@ func (s LifecycleStore) SaveAccountErasureApproval(ctx context.Context, approval
 	if modulehost.ExecutorFromContext(ctx, nil) == nil {
 		return fmt.Errorf("account erasure requires host Action transaction")
 	}
-	payload, err := json.Marshal(approval)
+	request, found, err := s.GetSubjectRequest(ctx, approval.WorkspaceID, approval.RequestID, lifecyclepersistence.UnrestrictedDataScopeFilter())
 	if err != nil {
 		return err
 	}
-	statement, args, err := query.NewWorkspaceInsertBuilder(s.renderer, "_lifecycle_account_erasure_approvals", approval.WorkspaceID).
-		Columns("request_id", "payload_json").Values(approval.RequestID, string(payload)).Build()
-	if err != nil {
-		return err
+	if !found {
+		return fmt.Errorf("account erasure subject request is unavailable")
 	}
-	_, err = s.database(ctx).ExecContext(ctx, statement, args...)
-	return err
+	request.RequestType = model.SubjectRequestTypeAccountErasure
+	request.AccountErasure = &model.AccountErasureApproval{
+		WorkspaceID: approval.WorkspaceID, RequestID: approval.RequestID, SubjectID: approval.SubjectID,
+		RequestedBy: approval.RequestedBy, ApprovedBy: approval.ApprovedBy, OwnerOrgID: approval.OwnerOrgID,
+		ActionKey: approval.ActionKey, ApprovalID: approval.ApprovalID, BindingKey: approval.BindingKey,
+		ObjectKey: approval.ObjectKey, ProfileID: approval.ProfileID,
+	}
+	return s.SaveSubjectRequest(ctx, request)
 }
 
 func (s LifecycleStore) GetAccountErasureApproval(ctx context.Context, workspace, request string) (contract.AccountErasureApproval, bool, error) {
-	statement, args, err := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_account_erasure_approvals", workspace).
-		Columns("payload_json").Where(query.Equal("request_id", request)).Build()
+	value, found, err := s.GetSubjectRequest(ctx, workspace, request, lifecyclepersistence.UnrestrictedDataScopeFilter())
 	if err != nil {
 		return contract.AccountErasureApproval{}, false, err
 	}
-	var raw string
-	err = s.database(ctx).QueryRowContext(ctx, statement, args...).Scan(&raw)
-	if errors.Is(err, sql.ErrNoRows) {
+	if !found || value.RequestType != model.SubjectRequestTypeAccountErasure || value.AccountErasure == nil {
 		return contract.AccountErasureApproval{}, false, nil
 	}
-	if err != nil {
-		return contract.AccountErasureApproval{}, false, err
-	}
-	var approval contract.AccountErasureApproval
-	if err = json.Unmarshal([]byte(raw), &approval); err != nil {
-		return approval, false, err
+	stored := value.AccountErasure
+	approval := contract.AccountErasureApproval{
+		WorkspaceID: stored.WorkspaceID, RequestID: stored.RequestID, SubjectID: stored.SubjectID,
+		RequestedBy: stored.RequestedBy, ApprovedBy: stored.ApprovedBy, OwnerOrgID: stored.OwnerOrgID,
+		ActionKey: stored.ActionKey, ApprovalID: stored.ApprovalID, BindingKey: stored.BindingKey,
+		ObjectKey: stored.ObjectKey, ProfileID: stored.ProfileID,
 	}
 	if approval.WorkspaceID != workspace || approval.RequestID != request {
 		return approval, false, fmt.Errorf("account erasure approval scope mismatch")
@@ -66,11 +66,12 @@ func (s LifecycleStore) ListRunnableAccountErasures(ctx context.Context, limit i
 	ready := query.Or(query.EqualValue(query.QualifiedColumn("r", "status"), string(model.SubjectRequestApproved)),
 		query.And(query.EqualValue(query.QualifiedColumn("r", "status"), string(model.SubjectRequestFailed)), query.LessThanValue(query.QualifiedColumn("r", "updated_at"), lifecycleTime(now.Add(-30*time.Second)))),
 		query.And(query.EqualValue(query.QualifiedColumn("r", "status"), string(model.SubjectRequestExecuting)), query.LessThanValue(query.QualifiedColumn("r", "updated_at"), lifecycleTime(now.Add(-5*time.Minute)))))
-	statement, args, err := query.NewSelectBuilder(s.renderer, "_lifecycle_subject_requests").Alias("r").
+	statement, args, err := query.NewSelectBuilder(s.renderer, "_subject_requests").Alias("r").
 		Projections(query.Project(query.QualifiedColumn("r", "payload_json"))).
-		Join(query.InnerJoin("_lifecycle_account_erasure_approvals", "a", query.And(
-			query.EqualExpressions(query.QualifiedColumn("r", "workspace_id"), query.QualifiedColumn("a", "workspace_id")), query.EqualExpressions(query.QualifiedColumn("r", "id"), query.QualifiedColumn("a", "request_id"))))).
-		Where(query.And(query.EqualValue(query.QualifiedColumn("r", "kind"), string(model.SubjectRequestErase)), ready)).
+		Where(query.And(
+			query.EqualValue(query.QualifiedColumn("r", "request_type"), string(model.SubjectRequestTypeAccountErasure)),
+			query.EqualValue(query.QualifiedColumn("r", "kind"), string(model.SubjectRequestErase)), ready,
+		)).
 		OrderBy(query.AscendingExpression(query.QualifiedColumn("r", "updated_at")), query.AscendingExpression(query.QualifiedColumn("r", "id"))).Limit(limit).Build()
 	if err != nil {
 		return nil, err
@@ -89,6 +90,9 @@ func (s LifecycleStore) ListRunnableAccountErasures(ctx context.Context, limit i
 		var request model.SubjectRequest
 		if err = json.Unmarshal([]byte(raw), &request); err != nil {
 			return nil, err
+		}
+		if request.RequestType != model.SubjectRequestTypeAccountErasure || request.AccountErasure == nil {
+			return nil, fmt.Errorf("account erasure approval payload is incomplete")
 		}
 		requests = append(requests, request)
 	}

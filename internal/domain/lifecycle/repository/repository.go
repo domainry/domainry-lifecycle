@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	auditcontract "github.com/domainry/domainry-audit-sdk/contract"
 	lifecyclecontract "github.com/domainry/domainry-lifecycle-sdk/contract"
 	"sort"
 	"strings"
@@ -100,7 +101,6 @@ type SubjectRequestRepository interface {
 	SaveExternalErasures(context.Context, []lifecyclemodel.ExternalErasure) error
 	ListExternalErasures(context.Context, string, string, DataScopeFilter) ([]lifecyclemodel.ExternalErasure, error)
 	ReconcileExternalErasure(context.Context, string, string, string, time.Time, DataScopeFilter) (lifecyclemodel.ExternalErasure, bool, error)
-	SaveDeletionRegistration(context.Context, lifecyclemodel.DeletionRegistration) error
 	ListPendingDeletionRegistrations(context.Context, string, int, DataScopeFilter) ([]lifecyclemodel.DeletionRegistration, error)
 	ListSubjectExecutionSteps(context.Context, string, string) ([]lifecyclemodel.SubjectExecutionStep, error)
 	SaveSubjectExecutionStep(context.Context, lifecyclemodel.SubjectExecutionStep) error
@@ -122,7 +122,10 @@ type AccountErasureRepository interface {
 
 type LifecycleEvidenceRepository interface {
 	ListArchiveEntries(context.Context, string, string, int, DataScopeFilter) ([]lifecyclemodel.ArchiveEntry, error)
-	AppendAuditEvidence(context.Context, lifecyclemodel.AuditEvidence) error
 	Metrics(context.Context, string, time.Time, DataScopeFilter) (lifecyclemodel.Metrics, error)
 	GlobalMetrics(context.Context, lifecycleaccess.SystemScope, time.Time) (lifecyclemodel.Metrics, error)
+}
+
+type ComplianceEventRepository interface {
+	AppendComplianceEvent(context.Context, auditcontract.AppendRequest) error
 }

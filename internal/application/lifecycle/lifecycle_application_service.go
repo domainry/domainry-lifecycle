@@ -24,6 +24,7 @@ type LifecycleApplicationDependencies struct {
 	CleanupJobs     lifecyclepersistence.CleanupJobRepository
 	SubjectRequests lifecyclepersistence.SubjectRequestRepository
 	Evidence        lifecyclepersistence.LifecycleEvidenceRepository
+	Compliance      lifecyclepersistence.ComplianceEventRepository
 	Executors       []lifecyclecontract.OwnerLifecycleExecutor
 	SubjectResolver lifecyclecontract.SubjectIdentityResolver
 	SubjectHandlers []lifecyclecontract.SubjectExecutionHandler
@@ -39,6 +40,7 @@ type LifecycleApplicationService struct {
 	cleanupJobs     lifecyclepersistence.CleanupJobRepository
 	subjectRequests lifecyclepersistence.SubjectRequestRepository
 	evidence        lifecyclepersistence.LifecycleEvidenceRepository
+	compliance      lifecyclepersistence.ComplianceEventRepository
 	executors       map[string]lifecyclecontract.OwnerLifecycleExecutor
 	resolver        lifecyclecontract.SubjectIdentityResolver
 	subjectHandlers []lifecyclecontract.SubjectExecutionHandler
@@ -49,7 +51,7 @@ type LifecycleApplicationService struct {
 }
 
 func NewLifecycleApplicationService(ctx context.Context, deps LifecycleApplicationDependencies) *LifecycleApplicationService {
-	service := &LifecycleApplicationService{policies: deps.Policies, legalHolds: deps.LegalHolds, cleanupJobs: deps.CleanupJobs, subjectRequests: deps.SubjectRequests, evidence: deps.Evidence, executors: map[string]lifecyclecontract.OwnerLifecycleExecutor{}, resolver: deps.SubjectResolver, subjectHandlers: append([]lifecyclecontract.SubjectExecutionHandler(nil), deps.SubjectHandlers...), externalErasure: deps.ExternalErasure, artifacts: deps.Artifacts, uploadArtifacts: deps.UploadArtifacts, transactions: deps.Transactions}
+	service := &LifecycleApplicationService{policies: deps.Policies, legalHolds: deps.LegalHolds, cleanupJobs: deps.CleanupJobs, subjectRequests: deps.SubjectRequests, evidence: deps.Evidence, compliance: deps.Compliance, executors: map[string]lifecyclecontract.OwnerLifecycleExecutor{}, resolver: deps.SubjectResolver, subjectHandlers: append([]lifecyclecontract.SubjectExecutionHandler(nil), deps.SubjectHandlers...), externalErasure: deps.ExternalErasure, artifacts: deps.Artifacts, uploadArtifacts: deps.UploadArtifacts, transactions: deps.Transactions}
 	for _, executor := range deps.Executors {
 		if executor != nil && strings.TrimSpace(executor.Owner(ctx)) != "" {
 			service.executors[strings.TrimSpace(executor.Owner(ctx))] = executor
@@ -228,6 +230,20 @@ func (s *LifecycleApplicationService) CreateCleanupJob(ctx context.Context, job 
 	return job, err
 }
 
+func (s *LifecycleApplicationService) InspectCleanupJob(ctx context.Context, workspaceID, jobID string, principal lifecycleaccess.Principal) (lifecyclemodel.CleanupJob, error) {
+	if err := lifecycleAuthorizeSystem(principal); err != nil {
+		return lifecyclemodel.CleanupJob{}, err
+	}
+	job, found, err := s.cleanupJobs.GetCleanupJob(ctx, strings.TrimSpace(workspaceID), strings.TrimSpace(jobID))
+	if err != nil {
+		return lifecyclemodel.CleanupJob{}, err
+	}
+	if !found {
+		return lifecyclemodel.CleanupJob{}, fmt.Errorf("cleanup job not found")
+	}
+	return job, nil
+}
+
 func (s *LifecycleApplicationService) ProcessCleanupJob(ctx context.Context, workspaceID, jobID, leaseOwner string, leaseTTL time.Duration, batchSize int, now time.Time, principal lifecycleaccess.Principal) (lifecyclemodel.CleanupJob, error) {
 	if err := lifecycleAuthorizeSystem(principal); err != nil {
 		return lifecyclemodel.CleanupJob{}, err
@@ -239,33 +255,36 @@ func (s *LifecycleApplicationService) ProcessCleanupJob(ctx context.Context, wor
 	if err != nil || !acquired {
 		return claimed, err
 	}
+	if operationID := requestcontext.OwnerExecutionID(ctx); operationID != "" {
+		claimed.OperationID = operationID
+	}
 	policyVersion, executor, err := s.policyExecutor(ctx, workspaceID, claimed.PolicyKey, lifecyclepersistence.UnrestrictedDataScopeFilter())
 	if err != nil {
-		return s.failCleanup(ctx, claimed, err, now, principal.UserID)
+		return s.failCleanup(ctx, claimed, err, now)
 	}
 	holds, err := s.legalHolds.ActiveLegalHolds(ctx, lifecyclemodel.ResourceTarget{WorkspaceID: workspaceID, Owner: policyVersion.Policy.Owner, ResourceID: "*"}, now)
 	if err != nil {
-		return s.failCleanup(ctx, claimed, err, now, principal.UserID)
+		return s.failCleanup(ctx, claimed, err, now)
 	}
 	externalJob, err := convertValue[sdkmodel.CleanupJob](claimed)
 	if err != nil {
-		return s.failCleanup(ctx, claimed, err, now, principal.UserID)
+		return s.failCleanup(ctx, claimed, err, now)
 	}
 	externalPolicy, err := convertValue[sdkmodel.PolicyVersion](policyVersion)
 	if err != nil {
-		return s.failCleanup(ctx, claimed, err, now, principal.UserID)
+		return s.failCleanup(ctx, claimed, err, now)
 	}
 	externalHolds, err := convertValue[[]sdkmodel.LegalHold](holds)
 	if err != nil {
-		return s.failCleanup(ctx, claimed, err, now, principal.UserID)
+		return s.failCleanup(ctx, claimed, err, now)
 	}
 	externalResult, err := executor.ProcessBatch(ctx, externalJob, externalPolicy, externalHolds, batchSize)
 	if err != nil {
-		return s.failCleanup(ctx, claimed, err, now, principal.UserID)
+		return s.failCleanup(ctx, claimed, err, now)
 	}
 	result, err := convertValue[lifecyclemodel.CleanupBatchResult](externalResult)
 	if err != nil {
-		return s.failCleanup(ctx, claimed, err, now, principal.UserID)
+		return s.failCleanup(ctx, claimed, err, now)
 	}
 	claimed.Checkpoint = result.Checkpoint
 	claimed.Scanned += result.Scanned
@@ -281,15 +300,14 @@ func (s *LifecycleApplicationService) ProcessCleanupJob(ctx context.Context, wor
 	} else {
 		claimed.Status = lifecyclemodel.CleanupStatusPending
 	}
-	event := "lifecycle.cleanup.progressed"
-	if claimed.Status == lifecyclemodel.CleanupStatusSucceeded {
-		event = "lifecycle.cleanup.succeeded"
-	}
 	err = s.withinTransaction(ctx, func(transactionContext context.Context) error {
 		if err := s.cleanupJobs.UpdateCleanupJob(transactionContext, claimed); err != nil {
 			return err
 		}
-		return s.audit(transactionContext, workspaceID, event, principal.UserID, claimed.ID, claimed.PolicyKey, claimed)
+		if claimed.Status != lifecyclemodel.CleanupStatusSucceeded {
+			return nil
+		}
+		return s.audit(transactionContext, workspaceID, "lifecycle.cleanup.succeeded", principal.UserID, claimed.ID, claimed.PolicyKey, claimed)
 	})
 	return claimed, err
 }
@@ -517,8 +535,13 @@ func (s *LifecycleApplicationService) ExecuteSubjectRequest(ctx context.Context,
 		if s.artifacts == nil {
 			err = fmt.Errorf("subject artifact store unavailable")
 		} else {
-			completed.DownloadExpiresAt = completed.UpdatedAt.Add(24 * time.Hour)
-			completed.ResultReference, err = s.artifacts.PutSubjectExport(ctx, workspaceID, completed.ID, raw, completed.DownloadExpiresAt)
+			var stored lifecyclecontract.SubjectExportReference
+			stored, err = s.artifacts.PutSubjectExport(ctx, lifecyclecontract.SubjectExportWrite{
+				WorkspaceID: workspaceID, RequestID: completed.ID, ResolvedIdentity: completed.ResolvedIdentity,
+				CreatedBy: completed.RequestedBy, OwnerOrgID: completed.OwnerOrgID, Payload: raw,
+				ExpiresAt: completed.UpdatedAt.Add(24 * time.Hour),
+			})
+			completed.ResultReference, completed.DownloadExpiresAt = stored.ArtifactID, stored.ExpiresAt
 		}
 	} else {
 		completed.ResultReference = "erase-evidence:" + completed.ID
@@ -534,10 +557,7 @@ func (s *LifecycleApplicationService) ExecuteSubjectRequest(ctx context.Context,
 	}
 	completed.Status = lifecyclemodel.SubjectRequestSucceeded
 	if completed.Kind == lifecyclemodel.SubjectRequestErase {
-		registration := lifecyclemodel.DeletionRegistration{RequestID: completed.ID, WorkspaceID: workspaceID, ResolvedIdentity: completed.ResolvedIdentity, BackupPending: true, Evidence: completed.ResultReference, UpdatedAt: completed.UpdatedAt}
-		return s.transitionSubjectWith(ctx, executing, completed, principal.UserID, "lifecycle.subject.succeeded", filter, func(transactionContext context.Context) error {
-			return s.subjectRequests.SaveDeletionRegistration(transactionContext, registration)
-		})
+		return s.transitionSubject(ctx, executing, completed, principal.UserID, "lifecycle.subject.succeeded", filter)
 	}
 	return s.transitionSubject(ctx, executing, completed, principal.UserID, "lifecycle.subject.succeeded", filter)
 }

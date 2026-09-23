@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	lifecyclemodel "github.com/domainry/domainry-lifecycle/internal/domain/lifecycle/model"
@@ -31,9 +32,9 @@ func (s LifecycleStore) Metrics(ctx context.Context, workspaceID string, now tim
 	if err := s.database(ctx).QueryRowContext(ctx, queryValue, args...).Scan(&metrics.LegalHoldCount); err != nil {
 		return metrics, err
 	}
-	queryValue, args, buildErr = query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_audit_evidence", workspaceID).Columns("event", "payload_json").Where(andPredicates(query.In("event", "lifecycle.cleanup.succeeded", "lifecycle.cleanup.failed"), s.cleanupJobReferenceScopePredicate("resource_id", workspaceID, filter))).Build()
+	queryValue, args, buildErr = query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_cleanup_jobs", workspaceID).Columns("payload_json").Where(dataScopePredicate(filter, "requested_by", "owner_org_id")).Build()
 	if buildErr != nil {
-		return metrics, buildErr
+		return metrics, fmt.Errorf("build lifecycle cleanup result metrics query: %w", buildErr)
 	}
 	rows, err := s.database(ctx).QueryContext(ctx, queryValue, args...)
 	if err != nil {
@@ -41,18 +42,17 @@ func (s LifecycleStore) Metrics(ctx context.Context, workspaceID string, now tim
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var event, payload string
-		if err := rows.Scan(&event, &payload); err != nil {
+		var payload string
+		if err := rows.Scan(&payload); err != nil {
 			return metrics, err
 		}
-		if event == "lifecycle.cleanup.failed" {
-			metrics.FailureTotal++
+		var job lifecyclemodel.CleanupJob
+		if json.Unmarshal([]byte(payload), &job) != nil {
 			continue
 		}
-		var evidence lifecyclemodel.AuditEvidence
-		var job lifecyclemodel.CleanupJob
-		if json.Unmarshal([]byte(payload), &evidence) == nil && json.Unmarshal(evidence.Payload, &job) == nil {
-			metrics.PurgedTotal += job.Purged
+		metrics.PurgedTotal += job.Purged
+		if job.Status == lifecyclemodel.CleanupStatusFailed {
+			metrics.FailureTotal++
 		}
 	}
 	if err := rows.Err(); err != nil {

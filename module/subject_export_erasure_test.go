@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	sharedartifact "github.com/domainry/domainry-foundation/artifact"
 	identitysdk "github.com/domainry/domainry-identity-sdk"
 	sdk "github.com/domainry/domainry-lifecycle-sdk"
 	"github.com/domainry/domainry-lifecycle-sdk/access"
@@ -17,7 +18,9 @@ import (
 
 type personalExportOwner struct{ integrationOwner }
 
-func (personalExportOwner) ResolveSubject(_ context.Context, _, _, subjectID string) (string,error) { return subjectID,nil }
+func (personalExportOwner) ResolveSubject(_ context.Context, _, _, subjectID string) (string, error) {
+	return subjectID, nil
+}
 
 func (personalExportOwner) ExportSubjectForRequest(context.Context, string, string, string) (json.RawMessage, error) {
 	return json.RawMessage(`{"email":"PRIVATE@example.test"}`), nil
@@ -95,11 +98,26 @@ func TestErasureRemovesPriorExportsAndSnapshotsAndBlocksNewExports(t *testing.T)
 	if erase, err = g.ExecuteSubjectRequest(actx, "workspace-a", erase.ID, operator); err != nil || erase.Status != model.SubjectRequestFailed {
 		t.Fatalf("delete failure falsely succeeded: %+v %v", erase, err)
 	}
+	var fenceSteps int
+	if err = host.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM _subject_steps WHERE workspace_id=? AND request_id=? AND owner='lifecycle' AND operation='erase_fence'`, "workspace-a", erase.ID).Scan(&fenceSteps); err != nil || fenceSteps != 1 {
+		t.Fatalf("indexed erasure fence steps=%d err=%v", fenceSteps, err)
+	}
+	var legacyFenceTables int
+	if err = host.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='_lifecycle_subject_erasure_fences'`).Scan(&legacyFenceTables); err != nil || legacyFenceTables != 0 {
+		t.Fatalf("legacy erasure fence tables=%d err=%v", legacyFenceTables, err)
+	}
 	if erase, err = g.ExecuteSubjectRequest(actx, "workspace-a", erase.ID, operator); err != nil || erase.Status != model.SubjectRequestSucceeded {
 		t.Fatalf("erasure retry failed: %+v %v", erase, err)
 	}
 	if _, err = g.DownloadSubjectExport(actx, "workspace-a", export.ID, operator, time.Now().UTC()); err == nil {
 		t.Fatal("prior export still downloadable")
+	}
+	deleted, found, err := host.artifacts.ByID(t.Context(), "workspace-a", export.ResultReference)
+	if err != nil || !found || deleted.Status != sharedartifact.StatusDeleted {
+		t.Fatalf("erased subject export Artifact=%#v found=%v err=%v", deleted, found, err)
+	}
+	if _, err = host.content.Stat(t.Context(), "workspace-a", deleted.StorageReference); !errors.Is(err, sharedartifact.ErrContentNotFound) {
+		t.Fatalf("erased subject export content remains: %v", err)
 	}
 	if err = artifacts.(contract.SubjectExportDeleter).DeleteSubjectExport(t.Context(), "workspace-other", other.ResultReference); err == nil {
 		t.Fatal("cross workspace artifact deletion accepted")
@@ -108,11 +126,11 @@ func TestErasureRemovesPriorExportsAndSnapshotsAndBlocksNewExports(t *testing.T)
 		t.Fatalf("other subject export removed: %v", err)
 	}
 	var snapshots int
-	if err = host.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM _lifecycle_subject_execution_steps WHERE workspace_id=? AND request_id=?`, "workspace-a", export.ID).Scan(&snapshots); err != nil || snapshots != 0 {
+	if err = host.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM _subject_steps WHERE workspace_id=? AND request_id=?`, "workspace-a", export.ID).Scan(&snapshots); err != nil || snapshots != 0 {
 		t.Fatalf("personal execution copies remain: %d %v", snapshots, err)
 	}
 	var raw string
-	if err = host.db.QueryRowContext(t.Context(), `SELECT payload_json FROM _lifecycle_subject_requests WHERE workspace_id=? AND id=?`, "workspace-a", export.ID).Scan(&raw); err != nil || strings.Contains(raw, "PRIVATE") {
+	if err = host.db.QueryRowContext(t.Context(), `SELECT payload_json FROM _subject_requests WHERE workspace_id=? AND id=?`, "workspace-a", export.ID).Scan(&raw); err != nil || strings.Contains(raw, "PRIVATE") {
 		t.Fatalf("request personal data remains: %s %v", raw, err)
 	}
 	newExport, err := g.CreateSubjectRequest(rctx, model.SubjectRequest{WorkspaceID: "workspace-a", Kind: model.SubjectRequestExport, SubjectType: "user", SubjectID: "subject-one", Reason: "new export"}, requester)

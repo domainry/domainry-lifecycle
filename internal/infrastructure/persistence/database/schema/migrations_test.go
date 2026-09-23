@@ -21,7 +21,7 @@ func TestPortableSchemaRendersAllSupportedDialects(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(migrations) != 4 || len(migrations[0].Statements) != len(tables())+len(indexes()) || len(migrations[1].Statements) != len(subjectExecutionStepTables())+len(subjectExecutionStepIndexes()) || len(migrations[2].Statements) != 16 || len(migrations[3].Statements) != 2 {
+			if len(migrations) != 2 || len(migrations[0].Statements) != len(tables())+len(indexes()) || len(migrations[1].Statements) != len(subjectExecutionStepTables())+len(subjectExecutionStepIndexes()) {
 				t.Fatalf("unexpected migration inventory: %#v", migrations)
 			}
 			joined := strings.Join(migrations[0].Statements, "\n")
@@ -30,19 +30,22 @@ func TestPortableSchemaRendersAllSupportedDialects(t *testing.T) {
 					t.Fatalf("%s migration omitted %s", name, table.name)
 				}
 			}
-			if !strings.Contains(strings.Join(migrations[1].Statements, "\n"), "_lifecycle_subject_execution_steps") {
+			if !strings.Contains(strings.Join(migrations[1].Statements, "\n"), "_subject_steps") {
 				t.Fatalf("%s migration omitted subject execution steps", name)
 			}
-			dataScope := strings.Join(migrations[2].Statements, "\n")
-			for _, column := range []string{"published_by", "created_by", "requested_by", "owner_org_id"} {
-				if !strings.Contains(dataScope, column) {
-					t.Fatalf("%s data-scope migration omitted %s", name, column)
+			allMigrations := joined + "\n" + strings.Join(migrations[1].Statements, "\n")
+			for _, retired := range []string{"_lifecycle_account_erasure_approvals", "_lifecycle_external_erasure_requests", "_lifecycle_deletion_registry", "_lifecycle_subject_erasure_fences", "_lifecycle_subject_execution_steps", "_lifecycle_archive_entries", "_lifecycle_file_artifacts"} {
+				if strings.Contains(allMigrations, retired) {
+					t.Fatalf("%s migration retained folded subject state table %s", name, retired)
 				}
 			}
-			for _, excluded := range []string{"data_permissions", "_lifecycle_subject_execution_steps", "_lifecycle_file_artifacts", "lease_owner", "fencing_token"} {
-				if strings.Contains(strings.ToLower(dataScope), excluded) {
-					t.Fatalf("%s data-scope migration touched excluded internal state %s: %s", name, excluded, dataScope)
+			for _, column := range []string{"created_by", "requested_by", "owner_org_id"} {
+				if !strings.Contains(joined, column) {
+					t.Fatalf("%s foundation schema omitted %s", name, column)
 				}
+			}
+			if strings.Contains(strings.ToLower(joined), "data_permissions") {
+				t.Fatalf("%s lifecycle schema must not own data_permissions: %s", name, joined)
 			}
 			if strings.Contains(strings.ToLower(joined), "if driver") {
 				t.Fatalf("migration leaked driver branching: %s", joined)

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	auditcontract "github.com/domainry/domainry-audit-sdk/contract"
 	requestcontext "github.com/domainry/domainry-foundation/requestcontext"
 	identitysdk "github.com/domainry/domainry-identity-sdk"
 	lifecycleaccess "github.com/domainry/domainry-lifecycle-sdk/access"
@@ -80,13 +81,10 @@ func (s *LifecycleApplicationService) transitionSubjectWith(ctx context.Context,
 	return next, err
 }
 
-func (s *LifecycleApplicationService) failCleanup(ctx context.Context, job lifecyclemodel.CleanupJob, cause error, now time.Time, actor string) (lifecyclemodel.CleanupJob, error) {
+func (s *LifecycleApplicationService) failCleanup(ctx context.Context, job lifecyclemodel.CleanupJob, cause error, now time.Time) (lifecyclemodel.CleanupJob, error) {
 	job.Status, job.LastError, job.LeaseOwner, job.LeaseExpiresAt, job.UpdatedAt = lifecyclemodel.CleanupStatusFailed, cause.Error(), "", time.Time{}, now
 	if err := s.withinTransaction(ctx, func(transactionContext context.Context) error {
-		if err := s.cleanupJobs.UpdateCleanupJob(transactionContext, job); err != nil {
-			return err
-		}
-		return s.audit(transactionContext, job.WorkspaceID, "lifecycle.cleanup.failed", actor, job.ID, job.PolicyKey, job)
+		return s.cleanupJobs.UpdateCleanupJob(transactionContext, job)
 	}); err != nil {
 		return job, err
 	}
@@ -94,8 +92,108 @@ func (s *LifecycleApplicationService) failCleanup(ctx context.Context, job lifec
 }
 
 func (s *LifecycleApplicationService) audit(ctx context.Context, workspaceID, event, actor, resourceID, policyKey string, payload any) error {
-	raw, _ := json.Marshal(payload)
-	return s.evidence.AppendAuditEvidence(ctx, lifecyclemodel.AuditEvidence{ID: requestcontext.NewRequestID(), WorkspaceID: workspaceID, Event: event, ActorID: actor, ResourceID: resourceID, PolicyKey: policyKey, Payload: raw, CreatedAt: time.Now().UTC()})
+	if s == nil || s.compliance == nil {
+		return fmt.Errorf("lifecycle shared Audit appender is unavailable")
+	}
+	descriptor, found := lifecycleAuditEvents[event]
+	if !found {
+		return fmt.Errorf("unregistered lifecycle Audit event: %s", event)
+	}
+	metadata := map[string]any{"owner": "lifecycle"}
+	if value := strings.TrimSpace(policyKey); value != "" {
+		metadata["policy_key"] = value
+	}
+	return s.compliance.AppendComplianceEvent(ctx, auditcontract.AppendRequest{
+		OperationID: lifecycleAuditOperationID(ctx, payload), OwnerRunID: lifecycleAuditOwnerRunID(payload),
+		Family: auditcontract.EventFamilyLifecycleCompliance, Event: event, ObjectKey: descriptor.objectKey, RecordID: strings.TrimSpace(resourceID),
+		Actor: auditcontract.Actor{
+			WorkspaceID: strings.TrimSpace(workspaceID), SubjectID: strings.TrimSpace(actor),
+			RequestID: requestcontext.RequestID(ctx), CorrelationID: requestcontext.CorrelationID(ctx),
+		},
+		Summary: descriptor.summary, Metadata: metadata, After: lifecycleAuditAfter(payload),
+	})
+}
+
+func lifecycleAuditOperationID(ctx context.Context, payload any) string {
+	if operationID := requestcontext.OwnerExecutionID(ctx); operationID != "" {
+		return operationID
+	}
+	if job, ok := payload.(lifecyclemodel.CleanupJob); ok {
+		return strings.TrimSpace(job.OperationID)
+	}
+	return ""
+}
+
+func lifecycleAuditOwnerRunID(payload any) string {
+	switch value := payload.(type) {
+	case lifecyclemodel.CleanupJob:
+		return strings.TrimSpace(value.ID)
+	case lifecyclemodel.SubjectRequest:
+		return strings.TrimSpace(value.ID)
+	case lifecyclemodel.ExternalErasure:
+		return strings.TrimSpace(value.ID)
+	case lifecyclemodel.DeletionRegistration:
+		return strings.TrimSpace(value.RequestID)
+	case lifecyclecontract.AccountErasureApproval:
+		return strings.TrimSpace(value.RequestID)
+	default:
+		return ""
+	}
+}
+
+type lifecycleAuditDescriptor struct {
+	objectKey string
+	summary   string
+}
+
+var lifecycleAuditEvents = map[string]lifecycleAuditDescriptor{
+	"lifecycle.policy.defaults_installed":   {"lifecycle.retention_policy", "Default retention policies installed"},
+	"lifecycle.policy.published":            {"lifecycle.retention_policy", "Retention policy published"},
+	"lifecycle.legal_hold.created":          {"lifecycle.legal_hold", "Legal hold created"},
+	"lifecycle.legal_hold.ended":            {"lifecycle.legal_hold", "Legal hold ended"},
+	"lifecycle.legal_holds.listed":          {"lifecycle.legal_hold", "Legal holds accessed"},
+	"lifecycle.cleanup.created":             {"lifecycle.cleanup_job", "Cleanup job created"},
+	"lifecycle.cleanup.succeeded":           {"lifecycle.cleanup_job", "Cleanup job completed"},
+	"lifecycle.archive.listed":              {"lifecycle.archive_entry", "Retention archive accessed"},
+	"lifecycle.subject.requested":           {"lifecycle.subject_request", "Subject request created"},
+	"lifecycle.subject.verified":            {"lifecycle.subject_request", "Subject request verified"},
+	"lifecycle.subject.previewed":           {"lifecycle.subject_request", "Subject request impact reviewed"},
+	"lifecycle.subject.approved":            {"lifecycle.subject_request", "Subject request approved"},
+	"lifecycle.subject.executing":           {"lifecycle.subject_request", "Subject request execution started"},
+	"lifecycle.subject.failed":              {"lifecycle.subject_request", "Subject request failed"},
+	"lifecycle.subject.succeeded":           {"lifecycle.subject_request", "Subject request completed"},
+	"lifecycle.subject.export_downloaded":   {"lifecycle.subject_request", "Subject export downloaded"},
+	"lifecycle.subject.export_expired":      {"lifecycle.subject_request", "Subject export expired"},
+	"lifecycle.external_erasure.reconciled": {"lifecycle.subject_request", "External erasure reconciled"},
+	"lifecycle.account_erasure.staged":      {"lifecycle.subject_request", "Approved account erasure staged"},
+	"lifecycle.deletion.replayed":           {"lifecycle.subject_request", "Registered deletion replayed"},
+}
+
+// lifecycleAuditAfter deliberately projects bounded compliance facts. In
+// particular it never copies subject identity, verification references,
+// provider evidence, worker leases/checkpoints, or free-form failure text into
+// the immutable Audit row.
+func lifecycleAuditAfter(payload any) map[string]any {
+	switch value := payload.(type) {
+	case lifecyclemodel.PolicyVersion:
+		return map[string]any{"policy_key": value.Policy.Key, "policy_version": value.Policy.Version, "owner": value.Policy.Owner, "status": value.Status, "revision": value.Revision}
+	case lifecyclemodel.LegalHold:
+		return map[string]any{"owner": value.Owner, "resource_type": value.ResourceType, "resource_id": value.ResourceID, "starts_at": value.StartsAt, "ends_at": value.EndsAt, "review_at": value.ReviewAt}
+	case lifecyclemodel.CleanupJob:
+		return map[string]any{"policy_key": value.PolicyKey, "policy_version": value.PolicyVersion, "operation": value.Operation, "status": value.Status, "dry_run": value.DryRun, "scanned": value.Scanned, "archived": value.Archived, "purged": value.Purged, "skipped": value.Skipped, "failed": value.Failed}
+	case lifecyclemodel.SubjectRequest:
+		return map[string]any{"request_type": value.RequestType, "kind": value.Kind, "status": value.Status, "backup_pending": value.BackupPending}
+	case lifecyclemodel.ExternalErasure:
+		return map[string]any{"request_id": value.RequestID, "connector_key": value.ConnectorKey, "status": value.Status, "reconciled_at": value.ReconciledAt}
+	case lifecyclemodel.DeletionRegistration:
+		return map[string]any{"request_id": value.RequestID, "backup_pending": value.BackupPending, "updated_at": value.UpdatedAt}
+	case lifecyclecontract.AccountErasureApproval:
+		return map[string]any{"request_id": value.RequestID, "action_key": value.ActionKey, "approval_id": value.ApprovalID, "object_key": value.ObjectKey, "profile_id": value.ProfileID}
+	case map[string]any:
+		return value
+	default:
+		return nil
+	}
 }
 
 func lifecycleAuthorize(principal lifecycleaccess.Principal, permission string) error {

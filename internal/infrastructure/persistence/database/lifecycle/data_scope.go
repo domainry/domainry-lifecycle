@@ -53,15 +53,6 @@ func andPredicates(predicates ...query.Predicate) query.Predicate {
 	return query.And(values...)
 }
 
-func (s LifecycleStore) subjectRequestScopePredicate(workspaceID string, filter lifecyclepersistence.DataScopeFilter) query.Predicate {
-	if filter.Normalized().Unrestricted {
-		return nil
-	}
-	subquery := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_subject_requests", workspaceID).Columns("id")
-	subquery.Where(dataScopePredicate(filter, "requested_by", "owner_org_id"))
-	return query.InSubquery("request_id", subquery)
-}
-
 func (s LifecycleStore) cleanupJobScopePredicate(workspaceID string, filter lifecyclepersistence.DataScopeFilter) query.Predicate {
 	return s.cleanupJobReferenceScopePredicate("job_id", workspaceID, filter)
 }

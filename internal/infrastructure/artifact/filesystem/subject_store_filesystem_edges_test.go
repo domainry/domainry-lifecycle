@@ -1,7 +1,6 @@
 package filesystem
 
 import (
-	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -12,94 +11,19 @@ import (
 	lifecyclecontract "github.com/domainry/domainry-lifecycle-sdk/contract"
 )
 
-func TestLifecycleSubjectArtifactFilesystemFailureEdges(t *testing.T) {
-	originalMkdir, originalCreate, originalRename := localMkdirAll, localCreateTemp, localRename
-	originalReadFile, originalReadDir, originalInfo := localReadFile, localReadDir, localDirEntryInfo
-	originalRemove, originalOpen, originalAbs := localRemove, localOpenFile, localAbsPath
+func TestLifecycleUploadStagingFilesystemFailureEdges(t *testing.T) {
+	originalReadDir, originalInfo := localReadDir, localDirEntryInfo
+	originalRemove, originalAbs := localRemove, localAbsPath
 	t.Cleanup(func() {
-		localMkdirAll, localCreateTemp, localRename = originalMkdir, originalCreate, originalRename
-		localReadFile, localReadDir, localDirEntryInfo = originalReadFile, originalReadDir, originalInfo
-		localRemove, localOpenFile, localAbsPath = originalRemove, originalOpen, originalAbs
+		localReadDir, localDirEntryInfo = originalReadDir, originalInfo
+		localRemove, localAbsPath = originalRemove, originalAbs
 	})
 	reset := func() {
-		localMkdirAll, localCreateTemp, localRename = originalMkdir, originalCreate, originalRename
-		localReadFile, localReadDir, localDirEntryInfo = originalReadFile, originalReadDir, originalInfo
-		localRemove, localOpenFile, localAbsPath = originalRemove, originalOpen, originalAbs
+		localReadDir, localDirEntryInfo = originalReadDir, originalInfo
+		localRemove, localAbsPath = originalRemove, originalAbs
 	}
 	store := NewSubjectStore(t.TempDir())
-	if _, err := store.ReadSubjectExport(t.Context(), "workspace-a", "../invalid", time.Now()); err == nil {
-		t.Fatal("invalid export reference read accepted")
-	}
-	put := func() error {
-		_, err := store.PutSubjectExport(t.Context(), "workspace-a", "request-1", json.RawMessage(`{"ok":true}`), time.Now().Add(time.Hour))
-		return err
-	}
-	localMkdirAll = func(string, os.FileMode) error { return errors.New("mkdir") }
-	if err := put(); err == nil {
-		t.Fatal("mkdir failure ignored")
-	}
-	reset()
-	if _, err := store.PutSubjectExport(t.Context(), "workspace-a", "request-1", json.RawMessage("{"), time.Now().Add(time.Hour)); err == nil {
-		t.Fatal("marshal failure ignored")
-	}
-	localCreateTemp = func(string, string) (localTemporaryFile, error) { return nil, errors.New("create") }
-	if err := put(); err == nil {
-		t.Fatal("create failure ignored")
-	}
-	for _, stage := range []string{"chmod", "write", "sync", "close"} {
-		reset()
-		localCreateTemp = func(string, string) (localTemporaryFile, error) {
-			return &failingTemporaryFile{name: filepath.Join(t.TempDir(), "stage"), fail: stage}, nil
-		}
-		if err := put(); err == nil {
-			t.Fatalf("stage=%s failure ignored", stage)
-		}
-	}
-	reset()
-	localCreateTemp = func(string, string) (localTemporaryFile, error) {
-		return &failingTemporaryFile{name: filepath.Join(t.TempDir(), "stage")}, nil
-	}
-	localRename = func(string, string) error { return errors.New("rename") }
-	if err := put(); err == nil {
-		t.Fatal("rename failure ignored")
-	}
-
-	reset()
-	localReadDir = func(string) ([]os.DirEntry, error) { return nil, errors.New("read-dir") }
-	if _, err := store.DeleteExpiredSubjectExports(t.Context(), time.Now()); err == nil {
-		t.Fatal("export read-dir failure ignored")
-	}
-	reset()
 	now := time.Now().UTC()
-	if err := os.MkdirAll(store.directory, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	expiredPath := filepath.Join(store.directory, "expired.json")
-	raw, _ := json.Marshal(lifecycleSubjectArtifact{WorkspaceID: "workspace-a", ExpiresAt: now.Add(-time.Hour)})
-	if err := os.WriteFile(expiredPath, raw, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	localRemove = func(path string) error {
-		if path == expiredPath {
-			return errors.New("remove")
-		}
-		return originalRemove(path)
-	}
-	if _, err := store.DeleteExpiredSubjectExports(t.Context(), now); err == nil {
-		t.Fatal("expired export remove failure ignored")
-	}
-	reset()
-	localReadFile = func(path string) ([]byte, error) {
-		if path == expiredPath {
-			return nil, errors.New("read")
-		}
-		return originalReadFile(path)
-	}
-	if _, err := store.DeleteExpiredSubjectExports(t.Context(), now); err != nil {
-		t.Fatalf("unreadable export should be skipped: %v", err)
-	}
-
-	reset()
 	localAbsPath = func(string) (string, error) { return "", errors.New("abs") }
 	if _, err := store.DeleteExpiredUploadStaging(t.Context(), now); err == nil {
 		t.Fatal("staging abs failure ignored")
@@ -210,34 +134,6 @@ func TestLifecycleSubjectFileFilesystemFailureEdges(t *testing.T) {
 	if _, _, err := store.subjectFilePath(lifecyclecontract.SubjectFileReference{WorkspaceID: "workspace-a", Reference: ".."}); err == nil {
 		t.Fatal("parent filename accepted")
 	}
-}
-
-type failingTemporaryFile struct{ name, fail string }
-
-func (file *failingTemporaryFile) Name() string { return file.name }
-func (file *failingTemporaryFile) Chmod(os.FileMode) error {
-	if file.fail == "chmod" {
-		return errors.New("chmod")
-	}
-	return nil
-}
-func (file *failingTemporaryFile) Write(value []byte) (int, error) {
-	if file.fail == "write" {
-		return 0, errors.New("write")
-	}
-	return len(value), nil
-}
-func (file *failingTemporaryFile) Sync() error {
-	if file.fail == "sync" {
-		return errors.New("sync")
-	}
-	return nil
-}
-func (file *failingTemporaryFile) Close() error {
-	if file.fail == "close" {
-		return errors.New("close")
-	}
-	return nil
 }
 
 type failingReadableFile struct {

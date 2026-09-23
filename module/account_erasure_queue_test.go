@@ -57,7 +57,7 @@ func TestAccountErasureQueueCommitsWithActionAndExecutesAfterCommit(t *testing.T
 	if !errors.Is(err, abort) {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"_lifecycle_subject_requests", "_lifecycle_account_erasure_approvals", "_lifecycle_audit_evidence"} {
+	for _, table := range []string{"_subject_requests", "_audit_events"} {
 		var count int
 		if err = host.db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil || count != 0 {
 			t.Fatalf("Action rollback left %s rows=%d err=%v", table, count, err)

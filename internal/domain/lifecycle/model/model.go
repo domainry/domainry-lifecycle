@@ -88,6 +88,7 @@ const (
 type CleanupJob struct {
 	ID             string        `json:"id"`
 	WorkspaceID    string        `json:"workspace_id"`
+	OperationID    string        `json:"operation_id,omitempty"`
 	PolicyKey      string        `json:"policy_key"`
 	PolicyVersion  string        `json:"policy_version"`
 	Operation      Operation     `json:"operation"`
@@ -131,6 +132,14 @@ const (
 	SubjectRequestErase  SubjectRequestKind = "erase"
 )
 
+type SubjectRequestType string
+
+const (
+	SubjectRequestTypeStandard       SubjectRequestType = "subject_request"
+	SubjectRequestTypeAccountErasure SubjectRequestType = "account_erasure"
+	SubjectRequestTypeExternalErase  SubjectRequestType = "external_erasure"
+)
+
 type SubjectRequestStatus string
 
 const (
@@ -144,28 +153,44 @@ const (
 )
 
 type SubjectRequest struct {
-	ID                string               `json:"id"`
-	WorkspaceID       string               `json:"workspace_id"`
-	Kind              SubjectRequestKind   `json:"kind"`
-	Status            SubjectRequestStatus `json:"status"`
-	SubjectType       string               `json:"subject_type"`
-	SubjectID         string               `json:"subject_id"`
-	ResolvedIdentity  string               `json:"resolved_identity,omitempty"`
-	RequestedBy       string               `json:"requested_by"`
-	OwnerOrgID        string               `json:"owner_org_id,omitempty"`
-	VerifiedBy        string               `json:"verified_by,omitempty"`
-	ApprovedBy        string               `json:"approved_by,omitempty"`
-	SecondFactorRef   string               `json:"second_factor_ref,omitempty"`
-	Reason            string               `json:"reason"`
-	ImpactPreview     json.RawMessage      `json:"impact_preview,omitempty"`
-	ResultReference   string               `json:"result_reference,omitempty"`
-	DownloadExpiresAt time.Time            `json:"download_expires_at,omitempty"`
-	BackupPending     bool                 `json:"backup_pending"`
-	LastError         string               `json:"last_error,omitempty"`
-	ExecutionAttempt  int64                `json:"execution_attempt"`
-	ExecutionLeaseEnd time.Time            `json:"execution_lease_end,omitempty"`
-	CreatedAt         time.Time            `json:"created_at"`
-	UpdatedAt         time.Time            `json:"updated_at"`
+	ID                string                  `json:"id"`
+	WorkspaceID       string                  `json:"workspace_id"`
+	RequestType       SubjectRequestType      `json:"request_type"`
+	Kind              SubjectRequestKind      `json:"kind"`
+	Status            SubjectRequestStatus    `json:"status"`
+	SubjectType       string                  `json:"subject_type"`
+	SubjectID         string                  `json:"subject_id"`
+	ResolvedIdentity  string                  `json:"resolved_identity,omitempty"`
+	RequestedBy       string                  `json:"requested_by"`
+	OwnerOrgID        string                  `json:"owner_org_id,omitempty"`
+	VerifiedBy        string                  `json:"verified_by,omitempty"`
+	ApprovedBy        string                  `json:"approved_by,omitempty"`
+	SecondFactorRef   string                  `json:"second_factor_ref,omitempty"`
+	Reason            string                  `json:"reason"`
+	ImpactPreview     json.RawMessage         `json:"impact_preview,omitempty"`
+	ResultReference   string                  `json:"result_reference,omitempty"`
+	DownloadExpiresAt time.Time               `json:"download_expires_at,omitempty"`
+	BackupPending     bool                    `json:"backup_pending"`
+	LastError         string                  `json:"last_error,omitempty"`
+	ExecutionAttempt  int64                   `json:"execution_attempt"`
+	ExecutionLeaseEnd time.Time               `json:"execution_lease_end,omitempty"`
+	AccountErasure    *AccountErasureApproval `json:"account_erasure,omitempty"`
+	CreatedAt         time.Time               `json:"created_at"`
+	UpdatedAt         time.Time               `json:"updated_at"`
+}
+
+type AccountErasureApproval struct {
+	WorkspaceID string `json:"workspace_id"`
+	RequestID   string `json:"request_id"`
+	SubjectID   string `json:"subject_id"`
+	RequestedBy string `json:"requested_by"`
+	ApprovedBy  string `json:"approved_by"`
+	OwnerOrgID  string `json:"owner_org_id"`
+	ActionKey   string `json:"action_key"`
+	ApprovalID  string `json:"approval_id"`
+	BindingKey  string `json:"binding_key"`
+	ObjectKey   string `json:"object_key"`
+	ProfileID   string `json:"profile_id"`
 }
 
 type SubjectExportReference struct {
@@ -216,17 +241,6 @@ type ArchiveEntry struct {
 	PayloadHash   string          `json:"payload_hash"`
 	Payload       json.RawMessage `json:"-"`
 	ArchivedAt    time.Time       `json:"archived_at"`
-}
-
-type AuditEvidence struct {
-	ID          string          `json:"id"`
-	WorkspaceID string          `json:"workspace_id"`
-	Event       string          `json:"event"`
-	ActorID     string          `json:"actor_id"`
-	ResourceID  string          `json:"resource_id"`
-	PolicyKey   string          `json:"policy_key,omitempty"`
-	Payload     json.RawMessage `json:"payload"`
-	CreatedAt   time.Time       `json:"created_at"`
 }
 
 type Metrics struct {

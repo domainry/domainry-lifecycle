@@ -6,13 +6,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	actioncontract "github.com/domainry/domainry-foundation/action"
-	"github.com/domainry/domainry-foundation/modulecapability"
 	"github.com/domainry/domainry-foundation/modulehttp"
 	sdk "github.com/domainry/domainry-lifecycle-sdk"
 	"github.com/domainry/domainry-lifecycle-sdk/access"
@@ -32,25 +30,11 @@ type Binding struct {
 	service    *lifecycleapplication.LifecycleApplicationService
 	workers    *lifecycleapplication.WorkerRunner
 	adapters   []modulehttp.Adapter
-	capability modulecapability.Binding
 	bound      bool
 }
 
-func NewBinding(host modulehost.Host, capability modulecapability.Binding) (*Binding, error) {
-	if capability == nil {
-		return nil, fmt.Errorf("Lifecycle capability binding is required")
-	}
-	return &Binding{repository: infra.NewLifecycleStore(host), host: host, capability: capability}, nil
-}
-
-func (b *Binding) CapabilitySummary(ctx context.Context) (modulecapability.ModuleSummary, error) {
-	return b.capability.CapabilitySummary(ctx)
-}
-func (b *Binding) CapabilityCategory(ctx context.Context, key string) (modulecapability.CategoryDocument, error) {
-	return b.capability.CapabilityCategory(ctx, key)
-}
-func (b *Binding) ValidateCapabilityCandidate(ctx context.Context, request modulecapability.ValidationRequest) (modulecapability.ValidationResult, error) {
-	return b.capability.ValidateCapabilityCandidate(ctx, request)
+func NewBinding(host modulehost.Host) (*Binding, error) {
+	return &Binding{repository: infra.NewLifecycleStore(host), host: host}, nil
 }
 
 func (*Binding) Descriptor() sdk.Descriptor {
@@ -105,7 +89,7 @@ func (b *Binding) BindOwners(ctx context.Context, extensions sdk.OwnerExtensions
 	}
 	service := lifecycleapplication.NewLifecycleApplicationService(ctx, lifecycleapplication.LifecycleApplicationDependencies{
 		Policies: b.repository, LegalHolds: b.repository, CleanupJobs: b.repository,
-		SubjectRequests: b.repository, Evidence: b.repository,
+		SubjectRequests: b.repository, Evidence: b.repository, Compliance: b.repository,
 		Executors: extensions.Executors, SubjectResolver: extensions.SubjectResolver,
 		SubjectHandlers: subjectHandlers, ExternalErasure: extensions.ExternalErasure,
 		Artifacts: extensions.Artifacts, UploadArtifacts: extensions.UploadArtifacts, Transactions: b.host.Transactions(),
@@ -247,6 +231,10 @@ func (b governanceBinding) CreateCleanupJob(ctx context.Context, value sdkmodel.
 	result, err := b.service.CreateCleanupJob(ctx, input, principal)
 	return convertResult[sdkmodel.CleanupJob](result, err)
 }
+func (b governanceBinding) InspectCleanupJob(ctx context.Context, workspaceID, jobID string, principal access.Principal) (sdkmodel.CleanupJob, error) {
+	result, err := b.service.InspectCleanupJob(ctx, workspaceID, jobID, principal)
+	return convertResult[sdkmodel.CleanupJob](result, err)
+}
 func (b governanceBinding) ProcessCleanupJob(ctx context.Context, workspaceID, jobID, leaseOwner string, leaseTTL time.Duration, batchSize int, now time.Time, principal access.Principal) (sdkmodel.CleanupJob, error) {
 	result, err := b.service.ProcessCleanupJob(ctx, workspaceID, jobID, leaseOwner, leaseTTL, batchSize, now, principal)
 	return convertResult[sdkmodel.CleanupJob](result, err)
@@ -342,8 +330,8 @@ func (b archiveStoreBinding) ArchivePayload(ctx context.Context, workspaceID str
 	}
 	return b.writer.ArchivePayload(ctx, workspaceID, internalJob, internalPolicy, sourceTable, resourceID, payload)
 }
-func (b archiveStoreBinding) Archived(ctx context.Context, workspaceID, jobID, sourceTable, resourceID string) (bool, error) {
-	return b.writer.Archived(ctx, workspaceID, jobID, sourceTable, resourceID)
+func (b archiveStoreBinding) Archived(ctx context.Context, workspaceID, sourceTable, resourceID, policyKey string) (bool, error) {
+	return b.writer.Archived(ctx, workspaceID, sourceTable, resourceID, policyKey)
 }
 
 func convertResult[T any](value any, sourceErr error) (T, error) {

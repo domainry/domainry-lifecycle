@@ -27,7 +27,7 @@ func (s *surfaceGovernanceStub) PublishPolicy(_ context.Context, policy lifecycl
 	return policy, nil
 }
 
-func TestLifecycleSurfaceOwnsProductRoutesAndOpenAPI(t *testing.T) {
+func TestLifecycleSurfaceOwnsProductRoutes(t *testing.T) {
 	adapter, err := NewAdapter(&surfaceGovernanceStub{})
 	if err != nil {
 		t.Fatal(err)
@@ -37,10 +37,6 @@ func TestLifecycleSurfaceOwnsProductRoutesAndOpenAPI(t *testing.T) {
 	}
 	if len(adapter.Routes()) != 20 {
 		t.Fatalf("routes=%d", len(adapter.Routes()))
-	}
-	provider := adapter.(modulehttp.OpenAPIProvider)
-	if len(provider.OpenAPIOperations()) != len(adapter.Routes()) {
-		t.Fatalf("OpenAPI operations=%d routes=%d", len(provider.OpenAPIOperations()), len(adapter.Routes()))
 	}
 	for _, route := range adapter.Routes() {
 		if route.Pattern() == "POST /lifecycle/cleanup/jobs/{jobID}/run" {

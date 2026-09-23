@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	auditcontract "github.com/domainry/domainry-audit-sdk/contract"
+	"github.com/domainry/domainry-foundation/requestcontext"
 	identitysdk "github.com/domainry/domainry-identity-sdk"
 	lifecyclesdk "github.com/domainry/domainry-lifecycle-sdk"
 	lifecycleaccess "github.com/domainry/domainry-lifecycle-sdk/access"
@@ -40,13 +42,13 @@ func (m *policyMemory) ListPolicies(_ context.Context, workspaceID string, filte
 }
 
 type evidenceMemory struct {
-	values []lifecyclemodel.AuditEvidence
+	values []auditcontract.AppendRequest
 }
 
 func (*evidenceMemory) ListArchiveEntries(context.Context, string, string, int, lifecyclepersistence.DataScopeFilter) ([]lifecyclemodel.ArchiveEntry, error) {
 	return nil, nil
 }
-func (m *evidenceMemory) AppendAuditEvidence(_ context.Context, value lifecyclemodel.AuditEvidence) error {
+func (m *evidenceMemory) AppendComplianceEvent(_ context.Context, value auditcontract.AppendRequest) error {
 	m.values = append(m.values, value)
 	return nil
 }
@@ -72,7 +74,7 @@ func withLifecycleIdentity(ctx context.Context, principal lifecycleaccess.Princi
 
 func TestPolicyUseCaseOwnsServerFieldsAuthorizationAndAudit(t *testing.T) {
 	policies, evidence := &policyMemory{}, &evidenceMemory{}
-	service := NewLifecycleApplicationService(t.Context(), LifecycleApplicationDependencies{Policies: policies, Evidence: evidence})
+	service := NewLifecycleApplicationService(t.Context(), LifecycleApplicationDependencies{Policies: policies, Evidence: evidence, Compliance: evidence})
 	principal := lifecycleaccess.Principal{UserID: "admin", WorkspaceID: "workspace-a", Known: true, Permissions: map[string]struct{}{lifecyclesdk.ActionLifecyclePoliciesPublish: {}}}
 	ctx := withLifecycleIdentity(t.Context(), principal, lifecyclesdk.ActionLifecyclePoliciesPublish)
 	value := lifecyclemodel.PolicyVersion{Policy: lifecyclemodel.RetentionPolicy{Key: "record.default", Version: "1", Owner: "record", Class: lifecyclemodel.RetentionClassProduct, DefaultRetention: 24 * time.Hour, MinimumRetention: time.Hour, BackupBehavior: lifecyclemodel.BackupBehaviorStandard, EraseBehavior: lifecyclemodel.EraseBehaviorDelete}}
@@ -102,9 +104,31 @@ func TestPolicyUseCaseOwnsServerFieldsAuthorizationAndAudit(t *testing.T) {
 	}
 }
 
+func TestLifecycleAuditSeparatesOperationAndOwnerRunIdentities(t *testing.T) {
+	evidence := &evidenceMemory{}
+	service := NewLifecycleApplicationService(t.Context(), LifecycleApplicationDependencies{Evidence: evidence, Compliance: evidence})
+	job := lifecyclemodel.CleanupJob{ID: "cleanup-1", WorkspaceID: "workspace-a", OperationID: "operation-from-job"}
+	ctx := requestcontext.WithOwnerExecutionID(t.Context(), "operation-context")
+	if err := service.audit(ctx, job.WorkspaceID, "lifecycle.cleanup.succeeded", "worker", job.ID, "policy-1", job); err != nil {
+		t.Fatal(err)
+	}
+	if len(evidence.values) != 1 || evidence.values[0].OperationID != "operation-context" || evidence.values[0].OwnerRunID != "cleanup-1" {
+		t.Fatalf("correlated evidence=%#v", evidence.values)
+	}
+	if _, duplicated := evidence.values[0].Metadata["owner_run_id"]; duplicated {
+		t.Fatalf("owner run identity was duplicated into metadata: %#v", evidence.values[0].Metadata)
+	}
+	if err := service.audit(t.Context(), job.WorkspaceID, "lifecycle.cleanup.succeeded", "worker", job.ID, "policy-1", job); err != nil {
+		t.Fatal(err)
+	}
+	if evidence.values[1].OperationID != "operation-from-job" {
+		t.Fatalf("durable cleanup operation identity=%q", evidence.values[1].OperationID)
+	}
+}
+
 func TestPolicyPublishPrechecksCandidateWithinExactPermissionScope(t *testing.T) {
 	policies, evidence := &policyMemory{}, &evidenceMemory{}
-	service := NewLifecycleApplicationService(t.Context(), LifecycleApplicationDependencies{Policies: policies, Evidence: evidence})
+	service := NewLifecycleApplicationService(t.Context(), LifecycleApplicationDependencies{Policies: policies, Evidence: evidence, Compliance: evidence})
 	owner := lifecycleaccess.Principal{UserID: "owner-a", WorkspaceID: "workspace-a", Known: true, Permissions: map[string]struct{}{lifecyclesdk.ActionLifecyclePoliciesPublish: {}}}
 	base := lifecyclemodel.PolicyVersion{Policy: lifecyclemodel.RetentionPolicy{Key: "record.default", Version: "1", Owner: "record", Class: lifecyclemodel.RetentionClassProduct, DefaultRetention: 24 * time.Hour, MinimumRetention: time.Hour, BackupBehavior: lifecyclemodel.BackupBehaviorStandard, EraseBehavior: lifecyclemodel.EraseBehaviorDelete}}
 	if _, err := service.PublishPolicy(withLifecycleIdentity(t.Context(), owner, lifecyclesdk.ActionLifecyclePoliciesPublish), base, owner); err != nil {
@@ -124,5 +148,18 @@ func TestPolicyPublishPrechecksCandidateWithinExactPermissionScope(t *testing.T)
 func TestWorkerRunnerRejectsMissingService(t *testing.T) {
 	if _, err := NewWorkerRunner(nil).Tick(t.Context(), WorkerTick{}); err == nil {
 		t.Fatal("nil Lifecycle service was accepted")
+	}
+}
+
+func TestLifecycleAuditRegistryExcludesWorkerProgressAndFailureAttempts(t *testing.T) {
+	for _, event := range []string{"lifecycle.cleanup.progressed", "lifecycle.cleanup.failed"} {
+		if _, registered := lifecycleAuditEvents[event]; registered {
+			t.Fatalf("technical worker state registered as Audit event: %s", event)
+		}
+	}
+	for _, event := range []string{"lifecycle.cleanup.created", "lifecycle.cleanup.succeeded", "lifecycle.subject.succeeded"} {
+		if _, registered := lifecycleAuditEvents[event]; !registered {
+			t.Fatalf("compliance fact missing from Audit registry: %s", event)
+		}
 	}
 }

@@ -2,39 +2,41 @@ package lifecycle
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	sharedartifact "github.com/domainry/domainry-foundation/artifact"
 	requestcontext "github.com/domainry/domainry-foundation/requestcontext"
 	lifecycleaccess "github.com/domainry/domainry-lifecycle-sdk/access"
 	lifecyclecontract "github.com/domainry/domainry-lifecycle-sdk/contract"
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
-	"github.com/domainry/domainry-orm/query"
 )
 
 const uploadArtifactGracePeriod = 24 * time.Hour
 
 var errUploadArtifactIdentityConflict = errors.New("lifecycle upload artifact identity conflict")
 
+type uploadArtifactMetadata struct {
+	ObjectKey        string    `json:"object_key"`
+	FieldKey         string    `json:"field_key"`
+	ReferenceState   string    `json:"reference_state"`
+	ScanProvider     string    `json:"scan_provider,omitempty"`
+	ScanEvidenceRef  string    `json:"scan_evidence_ref,omitempty"`
+	ScannedAt        time.Time `json:"scanned_at,omitempty"`
+	LastReferencedAt time.Time `json:"last_referenced_at,omitempty"`
+}
+
 type FileArtifactStore struct {
-	host       modulehost.Host
-	db         modulehost.Database
-	renderer   modulehost.Dialect
+	artifacts  sharedartifact.ManagedStore
 	fields     lifecyclecontract.UploadFieldCatalog
 	references lifecyclecontract.UploadArtifactReferenceResolver
 	cleaner    lifecyclecontract.ExpiredUploadReferenceCleaner
 	content    lifecyclecontract.ArtifactContentStore
-	uploadRoot string
-	removeFile func(string) error
-	absPath    func(string) (string, error)
-	relPath    func(string, string) (string, error)
 	contextErr func(context.Context) error
 }
 
@@ -52,10 +54,11 @@ func WithArtifactContentStore(content lifecyclecontract.ArtifactContentStore) Fi
 	return func(store *FileArtifactStore) { store.content = content }
 }
 
-func NewFileArtifactStore(host modulehost.Host, fields lifecyclecontract.UploadFieldCatalog, uploadRoot string, options ...FileArtifactStoreOption) *FileArtifactStore {
-	result := &FileArtifactStore{host: host, fields: fields, uploadRoot: uploadRoot, removeFile: os.Remove, absPath: filepath.Abs, relPath: filepath.Rel, contextErr: func(ctx context.Context) error { return ctx.Err() }}
-	if host != nil {
-		result.db, result.renderer = host.Database(), host.Dialect()
+func NewFileArtifactStore(host modulehost.Host, fields lifecyclecontract.UploadFieldCatalog, _ string, options ...FileArtifactStoreOption) *FileArtifactStore {
+	result := &FileArtifactStore{fields: fields, contextErr: func(ctx context.Context) error { return ctx.Err() }}
+	if artifactHost, ok := host.(modulehost.ArtifactStoreHost); ok {
+		result.artifacts = artifactHost.ArtifactStore()
+		result.content = artifactHost.ArtifactContentStore()
 	}
 	for _, option := range options {
 		if option != nil {
@@ -65,113 +68,94 @@ func NewFileArtifactStore(host modulehost.Host, fields lifecyclecontract.UploadF
 	return result
 }
 
-func (s *FileArtifactStore) database(ctx context.Context) modulehost.DBTX {
-	return modulehost.ExecutorFromContext(ctx, s.db)
-}
-
-func (s *FileArtifactStore) RegisterUpload(ctx context.Context, artifact lifecyclecontract.UploadArtifact) error {
-	if s == nil || s.host == nil || s.db == nil || s.renderer == nil {
-		return fmt.Errorf("upload artifact store unavailable")
+func (s *FileArtifactStore) RegisterUpload(ctx context.Context, value lifecyclecontract.UploadArtifact) error {
+	if s == nil || s.artifacts == nil {
+		return fmt.Errorf("upload Artifact store unavailable")
 	}
-	workspace, err := lifecycleaccess.NewWorkspaceID(artifact.WorkspaceID)
+	workspace, err := lifecycleaccess.NewWorkspaceID(value.WorkspaceID)
 	if err != nil {
 		return err
 	}
-	artifact.WorkspaceID = workspace.String()
-	artifact.ID, artifact.ObjectKey, artifact.FieldKey, artifact.Filename = strings.TrimSpace(artifact.ID), strings.TrimSpace(artifact.ObjectKey), strings.TrimSpace(artifact.FieldKey), strings.TrimSpace(artifact.Filename)
-	if artifact.ID == "" {
-		artifact.ID = requestcontext.NewRequestID()
+	value.WorkspaceID = workspace.String()
+	value.ID, value.ObjectKey, value.FieldKey, value.Filename = strings.TrimSpace(value.ID), strings.TrimSpace(value.ObjectKey), strings.TrimSpace(value.FieldKey), strings.TrimSpace(value.Filename)
+	value.ContentType, value.SHA256 = strings.TrimSpace(value.ContentType), strings.ToLower(strings.TrimSpace(value.SHA256))
+	if value.ID == "" {
+		value.ID = requestcontext.NewRequestID()
 	}
-	if s.fields == nil || !s.fields.HasUploadField(artifact.ObjectKey, artifact.FieldKey) {
+	if s.fields == nil || !s.fields.HasUploadField(value.ObjectKey, value.FieldKey) {
 		return fmt.Errorf("upload artifact owner field is not declared")
 	}
-	if artifact.ID == "" || artifact.Filename == "" || filepath.Base(artifact.Filename) != artifact.Filename || artifact.SHA256 == "" || artifact.Size < 0 || artifact.CreatedAt.IsZero() {
+	if value.Filename == "" || filepath.Base(value.Filename) != value.Filename || value.SHA256 == "" || value.Size < 0 || value.CreatedAt.IsZero() {
 		return fmt.Errorf("upload artifact evidence is incomplete")
 	}
-	if existing, found, lookupErr := s.findRegisteredUpload(ctx, artifact.WorkspaceID, "id", artifact.ID); lookupErr != nil {
+	if existing, found, lookupErr := s.artifacts.ByID(lifecycleArtifactContext(ctx), value.WorkspaceID, value.ID); lookupErr != nil {
 		return lookupErr
 	} else if found {
-		if sameUploadArtifactIdentity(existing, artifact) {
+		registered, decodeErr := uploadArtifactFromShared(existing)
+		if decodeErr == nil && sameUploadArtifactIdentity(registered, value) {
 			return nil
 		}
 		return errUploadArtifactIdentityConflict
 	}
-	if _, found, lookupErr := s.findRegisteredUpload(ctx, artifact.WorkspaceID, "filename", artifact.Filename); lookupErr != nil {
-		return lookupErr
-	} else if found {
+	byFilename, err := s.artifacts.List(lifecycleArtifactContext(ctx), value.WorkspaceID, sharedartifact.Query{Owner: sharedartifact.OwnerUploads, Kind: "file", Filename: value.Filename, Limit: 1})
+	if err != nil {
+		return err
+	}
+	if len(byFilename) != 0 {
 		return errUploadArtifactIdentityConflict
 	}
-	createdAt := artifact.CreatedAt.UTC().Format(time.RFC3339Nano)
-	queryValue, args, buildErr := query.NewWorkspaceInsertBuilder(s.renderer, "_lifecycle_file_artifacts", artifact.WorkspaceID).
-		Columns("id", "object_key", "field_key", "filename", "content_type", "sha256", "size_bytes", "status", "scan_status", "scan_provider", "scan_evidence_ref", "scanned_at", "created_at", "last_referenced_at", "delete_after", "deleted_at").
-		Values(artifact.ID, artifact.ObjectKey, artifact.FieldKey, artifact.Filename, artifact.ContentType, artifact.SHA256, artifact.Size, "staged", lifecyclecontract.FileScanPending, "", "", "", createdAt, "", artifact.CreatedAt.UTC().Add(uploadArtifactGracePeriod).Format(time.RFC3339Nano), "").Build()
-	if buildErr != nil {
-		return fmt.Errorf("build upload artifact insert: %w", buildErr)
+	metadata, err := encodeUploadArtifactMetadata(uploadArtifactMetadata{ObjectKey: value.ObjectKey, FieldKey: value.FieldKey, ReferenceState: "staged"})
+	if err != nil {
+		return err
 	}
-	if _, err = s.database(ctx).ExecContext(ctx, queryValue, args...); err == nil {
-		return nil
+	mediaType := value.ContentType
+	if mediaType == "" {
+		mediaType = "application/octet-stream"
 	}
-	// Resolve concurrent identical registration into the same idempotent result.
-	if existing, found, lookupErr := s.findRegisteredUpload(ctx, artifact.WorkspaceID, "id", artifact.ID); lookupErr == nil && found {
-		if sameUploadArtifactIdentity(existing, artifact) {
-			return nil
-		}
-		return errUploadArtifactIdentityConflict
+	createdAt := value.CreatedAt.UTC()
+	artifact := sharedartifact.Artifact{
+		ID: value.ID, WorkspaceID: value.WorkspaceID, Owner: sharedartifact.OwnerUploads, Kind: "file", IdempotencyKey: value.ID,
+		CreatedBy: "runtime_upload", Filename: value.Filename, MediaType: mediaType, ContentSHA256: value.SHA256, SizeBytes: value.Size,
+		StorageReference: value.Filename, Status: sharedartifact.StatusPending, ExpiresAt: createdAt.Add(uploadArtifactGracePeriod),
+		ScanStatus: sharedartifact.ScanPending, Metadata: metadata, CreatedAt: createdAt, UpdatedAt: createdAt,
 	}
-	if _, found, lookupErr := s.findRegisteredUpload(ctx, artifact.WorkspaceID, "filename", artifact.Filename); lookupErr == nil && found {
+	_, _, err = s.artifacts.Register(lifecycleArtifactContext(ctx), artifact)
+	if errors.Is(err, sharedartifact.ErrIdentityConflict) {
 		return errUploadArtifactIdentityConflict
 	}
 	return err
 }
 
-func (s *FileArtifactStore) findRegisteredUpload(ctx context.Context, workspaceID, field, value string) (lifecyclecontract.UploadArtifact, bool, error) {
-	queryValue, args, err := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_file_artifacts", workspaceID).
-		Columns("id", "workspace_id", "object_key", "field_key", "filename", "content_type", "sha256", "size_bytes").Where(query.Equal(field, value)).Build()
-	if err != nil {
-		return lifecyclecontract.UploadArtifact{}, false, fmt.Errorf("build upload artifact lookup: %w", err)
-	}
-	var artifact lifecyclecontract.UploadArtifact
-	err = s.database(ctx).QueryRowContext(ctx, queryValue, args...).Scan(&artifact.ID, &artifact.WorkspaceID, &artifact.ObjectKey, &artifact.FieldKey, &artifact.Filename, &artifact.ContentType, &artifact.SHA256, &artifact.Size)
-	if err == sql.ErrNoRows {
-		return lifecyclecontract.UploadArtifact{}, false, nil
-	}
-	return artifact, err == nil, err
-}
-
 func sameUploadArtifactIdentity(left, right lifecyclecontract.UploadArtifact) bool {
+	leftType, rightType := strings.TrimSpace(left.ContentType), strings.TrimSpace(right.ContentType)
+	if leftType == "application/octet-stream" && rightType == "" {
+		rightType = leftType
+	}
 	return left.ID == right.ID && left.WorkspaceID == right.WorkspaceID && left.ObjectKey == right.ObjectKey && left.FieldKey == right.FieldKey && left.Filename == right.Filename &&
-		strings.EqualFold(strings.TrimSpace(left.ContentType), strings.TrimSpace(right.ContentType)) && strings.EqualFold(strings.TrimSpace(left.SHA256), strings.TrimSpace(right.SHA256)) && left.Size == right.Size
+		strings.EqualFold(leftType, rightType) && strings.EqualFold(strings.TrimSpace(left.SHA256), strings.TrimSpace(right.SHA256)) && left.Size == right.Size
 }
 
 func (s *FileArtifactStore) FindFileScan(ctx context.Context, workspaceID, fileID string) (lifecyclecontract.FileScanEvidence, error) {
-	if s == nil || s.host == nil || s.db == nil || s.renderer == nil {
-		return lifecyclecontract.FileScanEvidence{}, fmt.Errorf("upload artifact store unavailable")
+	if s == nil || s.artifacts == nil {
+		return lifecyclecontract.FileScanEvidence{}, fmt.Errorf("upload Artifact store unavailable")
 	}
 	workspace, err := lifecycleaccess.NewWorkspaceID(workspaceID)
 	if err != nil {
 		return lifecyclecontract.FileScanEvidence{}, err
 	}
-	columns := []string{"id", "workspace_id", "filename", "content_type", "object_key", "field_key", "sha256", "size_bytes", "scan_status", "scan_provider", "scan_evidence_ref", "scanned_at"}
-	queryValue, args, buildErr := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_file_artifacts", workspace.String()).Columns(columns...).
-		Where(query.And(query.Equal("id", strings.TrimSpace(fileID)), query.Equal("deleted_at", ""))).Build()
-	if buildErr != nil {
-		return lifecyclecontract.FileScanEvidence{}, fmt.Errorf("build file scan lookup: %w", buildErr)
-	}
-	var evidence lifecyclecontract.FileScanEvidence
-	var scannedAt string
-	err = s.database(ctx).QueryRowContext(ctx, queryValue, args...).Scan(&evidence.FileID, &evidence.WorkspaceID, &evidence.Filename, &evidence.ContentType, &evidence.ObjectKey, &evidence.FieldKey, &evidence.SHA256, &evidence.Size, &evidence.Status, &evidence.Provider, &evidence.EvidenceRef, &scannedAt)
+	artifact, found, err := s.artifacts.ByID(lifecycleArtifactContext(ctx), workspace.String(), strings.TrimSpace(fileID))
 	if err != nil {
 		return lifecyclecontract.FileScanEvidence{}, err
 	}
-	if scannedAt != "" {
-		evidence.ScannedAt, err = time.Parse(time.RFC3339Nano, scannedAt)
+	if !found || artifact.Owner != sharedartifact.OwnerUploads || artifact.Kind != "file" || artifact.Status == sharedartifact.StatusDeleted {
+		return lifecyclecontract.FileScanEvidence{}, sql.ErrNoRows
 	}
-	return evidence, err
+	return fileScanEvidenceFromShared(artifact)
 }
 
 func (s *FileArtifactStore) PendingFileScans(ctx context.Context, scope lifecycleaccess.SystemScope, limit int) ([]lifecyclecontract.FileScanEvidence, error) {
-	if s == nil || s.host == nil || s.db == nil || s.renderer == nil {
-		return nil, fmt.Errorf("upload artifact store unavailable")
+	if s == nil || s.artifacts == nil {
+		return nil, fmt.Errorf("upload Artifact store unavailable")
 	}
 	if _, err := lifecycleaccess.NewSystemQueryScope(scope); err != nil {
 		return nil, err
@@ -179,67 +163,74 @@ func (s *FileArtifactStore) PendingFileScans(ctx context.Context, scope lifecycl
 	if limit <= 0 || limit > 100 {
 		limit = 25
 	}
-	columns := []string{"id", "workspace_id", "filename", "content_type", "object_key", "field_key", "sha256", "size_bytes", "scan_status", "scan_provider", "scan_evidence_ref", "scanned_at"}
-	queryValue, args, buildErr := query.NewSelectBuilder(s.renderer, "_lifecycle_file_artifacts").Columns(columns...).
-		Where(query.And(query.Equal("scan_status", lifecyclecontract.FileScanPending), query.Equal("deleted_at", ""))).
-		OrderBy(query.Ascending("created_at"), query.Ascending("id")).Limit(limit).Build()
-	if buildErr != nil {
-		return nil, fmt.Errorf("build pending file scan query: %w", buildErr)
-	}
-	rows, err := s.database(ctx).QueryContext(ctx, queryValue, args...)
+	artifacts, err := s.artifacts.List(lifecycleArtifactContext(ctx), "", sharedartifact.Query{
+		Owner: sharedartifact.OwnerUploads, Kind: "file", Statuses: []sharedartifact.Status{sharedartifact.StatusPending, sharedartifact.StatusAvailable},
+		ScanStatuses: []sharedartifact.ScanStatus{sharedartifact.ScanPending}, Limit: limit,
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	result := make([]lifecyclecontract.FileScanEvidence, 0, limit)
-	for rows.Next() {
-		var evidence lifecyclecontract.FileScanEvidence
-		var scannedAt string
-		if err := rows.Scan(&evidence.FileID, &evidence.WorkspaceID, &evidence.Filename, &evidence.ContentType, &evidence.ObjectKey, &evidence.FieldKey, &evidence.SHA256, &evidence.Size, &evidence.Status, &evidence.Provider, &evidence.EvidenceRef, &scannedAt); err != nil {
+	result := make([]lifecyclecontract.FileScanEvidence, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		evidence, err := fileScanEvidenceFromShared(artifact)
+		if err != nil {
 			return nil, err
 		}
 		result = append(result, evidence)
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func (s *FileArtifactStore) RecordFileScan(ctx context.Context, evidence lifecyclecontract.FileScanEvidence) error {
-	switch evidence.Status {
-	case lifecyclecontract.FileScanClean, lifecyclecontract.FileScanQuarantined, lifecyclecontract.FileScanFailed:
-	default:
+	nextScan, err := sharedScanStatus(evidence.Status)
+	if err != nil || nextScan == sharedartifact.ScanPending {
 		return fmt.Errorf("terminal file scan status required")
 	}
 	if strings.TrimSpace(evidence.Provider) == "" || strings.TrimSpace(evidence.EvidenceRef) == "" || evidence.ScannedAt.IsZero() {
 		return fmt.Errorf("file scan evidence is incomplete")
 	}
-	current, err := s.FindFileScan(ctx, evidence.WorkspaceID, evidence.FileID)
+	currentEvidence, err := s.FindFileScan(ctx, evidence.WorkspaceID, evidence.FileID)
 	if err != nil {
 		return err
 	}
-	if current.SHA256 != strings.TrimSpace(evidence.SHA256) || current.Size != evidence.Size {
+	if currentEvidence.SHA256 != strings.TrimSpace(evidence.SHA256) || currentEvidence.Size != evidence.Size {
 		return fmt.Errorf("file scan content identity mismatch")
 	}
-	if current.Status != lifecyclecontract.FileScanPending {
-		if current.Status == evidence.Status && current.Provider == strings.TrimSpace(evidence.Provider) && current.EvidenceRef == strings.TrimSpace(evidence.EvidenceRef) {
+	if currentEvidence.Status != lifecyclecontract.FileScanPending {
+		if currentEvidence.Status == evidence.Status && currentEvidence.Provider == strings.TrimSpace(evidence.Provider) && currentEvidence.EvidenceRef == strings.TrimSpace(evidence.EvidenceRef) {
 			return nil
 		}
 		return fmt.Errorf("file scan already has terminal evidence")
 	}
-	queryValue, args, buildErr := query.NewWorkspaceUpdateBuilder(s.renderer, "_lifecycle_file_artifacts", current.WorkspaceID).
-		Set("scan_status", evidence.Status).Set("scan_provider", strings.TrimSpace(evidence.Provider)).Set("scan_evidence_ref", strings.TrimSpace(evidence.EvidenceRef)).
-		Set("scanned_at", evidence.ScannedAt.UTC().Format(time.RFC3339Nano)).Where(query.And(query.Equal("id", current.FileID), query.Equal("sha256", current.SHA256), query.Equal("size_bytes", current.Size), query.Equal("scan_status", lifecyclecontract.FileScanPending))).Build()
-	if buildErr != nil {
-		return fmt.Errorf("build file scan update: %w", buildErr)
-	}
-	result, err := s.database(ctx).ExecContext(ctx, queryValue, args...)
+	artifact, found, err := s.artifacts.ByID(lifecycleArtifactContext(ctx), currentEvidence.WorkspaceID, currentEvidence.FileID)
 	if err != nil {
 		return err
 	}
-	changed, err := result.RowsAffected()
+	if !found {
+		return sql.ErrNoRows
+	}
+	metadata, err := decodeUploadArtifactMetadata(artifact.Metadata)
 	if err != nil {
 		return err
 	}
-	if changed != 1 {
+	metadata.ScanProvider, metadata.ScanEvidenceRef, metadata.ScannedAt = strings.TrimSpace(evidence.Provider), strings.TrimSpace(evidence.EvidenceRef), evidence.ScannedAt.UTC()
+	raw, err := encodeUploadArtifactMetadata(metadata)
+	if err != nil {
+		return err
+	}
+	nextStatus := artifact.Status
+	if nextScan == sharedartifact.ScanRejected {
+		nextStatus = sharedartifact.StatusRejected
+	}
+	changed, err := s.artifacts.Update(lifecycleArtifactContext(ctx), sharedartifact.Mutation{
+		WorkspaceID: artifact.WorkspaceID, ID: artifact.ID, Owner: artifact.Owner, Kind: artifact.Kind,
+		ExpectedStatus: artifact.Status, ExpectedScanStatus: sharedartifact.ScanPending, Status: nextStatus, ScanStatus: nextScan,
+		ExpiresAt: artifact.ExpiresAt, Metadata: raw, UpdatedAt: evidence.ScannedAt.UTC(),
+	})
+	if err != nil {
+		return err
+	}
+	if !changed {
 		latest, findErr := s.FindFileScan(ctx, evidence.WorkspaceID, evidence.FileID)
 		if findErr == nil && latest.Status == evidence.Status && latest.Provider == strings.TrimSpace(evidence.Provider) && latest.EvidenceRef == strings.TrimSpace(evidence.EvidenceRef) {
 			return nil
@@ -251,8 +242,8 @@ func (s *FileArtifactStore) RecordFileScan(ctx context.Context, evidence lifecyc
 
 func (s *FileArtifactStore) ReconcileUploadArtifacts(ctx context.Context, scope lifecycleaccess.SystemScope, now time.Time, limit int) (lifecyclecontract.UploadCleanupResult, error) {
 	result := lifecyclecontract.UploadCleanupResult{}
-	if s == nil || s.host == nil || s.db == nil || s.renderer == nil {
-		return result, fmt.Errorf("upload artifact store unavailable")
+	if s == nil || s.artifacts == nil || s.content == nil {
+		return result, fmt.Errorf("upload Artifact store or content store unavailable")
 	}
 	if _, err := lifecycleaccess.NewSystemCommandScope(scope); err != nil {
 		return result, err
@@ -261,83 +252,104 @@ func (s *FileArtifactStore) ReconcileUploadArtifacts(ctx context.Context, scope 
 		limit = 500
 	}
 	if s.cleaner != nil {
-		expiredDownloads, err := s.cleaner.ExpireUploadReferences(ctx, now, limit)
+		expired, err := s.cleaner.ExpireUploadReferences(ctx, now, limit)
 		if err != nil {
 			return result, err
 		}
-		result.ExpiredDownloads = expiredDownloads
+		result.ExpiredDownloads = expired
 	}
-	columns := []string{"id", "workspace_id", "object_key", "field_key", "filename", "status", "created_at", "delete_after"}
-	statement, args, buildErr := query.NewSelectBuilder(s.renderer, "_lifecycle_file_artifacts").Columns(columns...).
-		Where(query.NotEqual("status", "deleted")).OrderBy(query.Ascending("created_at"), query.Ascending("id")).Limit(limit).Build()
-	if buildErr != nil {
-		return result, fmt.Errorf("build upload artifact reconciliation query: %w", buildErr)
-	}
-	rows, err := s.database(ctx).QueryContext(ctx, statement, args...)
+	artifacts, err := s.artifacts.List(lifecycleArtifactContext(ctx), "", sharedartifact.Query{
+		Owner: sharedartifact.OwnerUploads, Kind: "file", Statuses: []sharedartifact.Status{sharedartifact.StatusPending, sharedartifact.StatusAvailable, sharedartifact.StatusRejected, sharedartifact.StatusExpired}, Limit: limit,
+	})
 	if err != nil {
 		return result, err
 	}
-	type candidate struct{ id, workspaceID, objectKey, fieldKey, filename, status, createdAt, deleteAfter string }
-	candidates := []candidate{}
-	for rows.Next() {
-		var item candidate
-		if err := rows.Scan(&item.id, &item.workspaceID, &item.objectKey, &item.fieldKey, &item.filename, &item.status, &item.createdAt, &item.deleteAfter); err != nil {
-			_ = rows.Close()
-			return result, err
-		}
-		candidates = append(candidates, item)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return result, err
-	}
-	_ = rows.Close()
-	for _, item := range candidates {
+	for _, artifact := range artifacts {
 		if err := s.contextErr(ctx); err != nil {
 			return result, err
 		}
 		result.Scanned++
-		referenced, err := s.artifactReferenced(ctx, item.workspaceID, item.objectKey, item.fieldKey, item.filename)
+		metadata, err := decodeUploadArtifactMetadata(artifact.Metadata)
+		if err != nil {
+			return result, err
+		}
+		if artifact.Status == sharedartifact.StatusExpired || artifact.Status == sharedartifact.StatusRejected {
+			deleted, deleteErr := s.deleteTerminalUploadArtifact(ctx, artifact, metadata, now)
+			if deleteErr != nil {
+				return result, deleteErr
+			}
+			if deleted {
+				result.Deleted++
+			}
+			continue
+		}
+		referenced, err := s.artifactReferenced(ctx, artifact.WorkspaceID, metadata.ObjectKey, metadata.FieldKey, artifact.Filename)
 		if err != nil {
 			return result, err
 		}
 		if referenced {
-			if err := s.updateArtifactState(ctx, item.workspaceID, item.id, "referenced", now, time.Time{}); err != nil {
+			metadata.ReferenceState, metadata.LastReferencedAt = "referenced", now.UTC()
+			if err := s.updateArtifact(ctx, artifact, sharedartifact.StatusAvailable, time.Time{}, metadata, now); err != nil {
 				return result, err
 			}
 			result.Referenced++
 			continue
 		}
-		deleteAfter, _ := time.Parse(time.RFC3339Nano, item.deleteAfter)
-		if item.status == "referenced" || deleteAfter.IsZero() {
-			if err := s.updateArtifactState(ctx, item.workspaceID, item.id, "orphaned", time.Time{}, now.Add(uploadArtifactGracePeriod)); err != nil {
+		if metadata.ReferenceState == "referenced" || artifact.ExpiresAt.IsZero() {
+			metadata.ReferenceState = "orphaned"
+			if err := s.updateArtifact(ctx, artifact, sharedartifact.StatusPending, now.Add(uploadArtifactGracePeriod), metadata, now); err != nil {
 				return result, err
 			}
 			result.Orphaned++
 			continue
 		}
-		if now.Before(deleteAfter) {
+		if now.Before(artifact.ExpiresAt) {
 			continue
 		}
-		if s.content != nil {
-			if err := s.content.Delete(ctx, item.workspaceID, item.filename); err != nil && !errors.Is(err, lifecyclecontract.ErrArtifactContentNotFound) {
-				return result, err
-			}
-		} else {
-			path, err := s.artifactPath(item.workspaceID, item.filename)
-			if err != nil {
-				return result, err
-			}
-			if err := s.removeFile(path); err != nil && !os.IsNotExist(err) {
-				return result, err
-			}
-		}
-		if err := s.markArtifactDeleted(ctx, item.workspaceID, item.id, now); err != nil {
+		metadata.ReferenceState = "expired"
+		if err := s.updateArtifact(ctx, artifact, sharedartifact.StatusExpired, artifact.ExpiresAt, metadata, now); err != nil {
 			return result, err
 		}
-		result.Deleted++
+		artifact.Status, artifact.UpdatedAt = sharedartifact.StatusExpired, now.UTC()
+		deleted, deleteErr := s.deleteTerminalUploadArtifact(ctx, artifact, metadata, now)
+		if deleteErr != nil {
+			return result, deleteErr
+		}
+		if deleted {
+			result.Deleted++
+		}
 	}
 	return result, nil
+}
+
+func (s *FileArtifactStore) deleteTerminalUploadArtifact(ctx context.Context, artifact sharedartifact.Artifact, metadata uploadArtifactMetadata, now time.Time) (bool, error) {
+	if artifact.Status != sharedartifact.StatusExpired && artifact.Status != sharedartifact.StatusRejected {
+		return false, fmt.Errorf("upload Artifact must be terminal before content deletion")
+	}
+	if err := s.content.Delete(ctx, artifact.WorkspaceID, artifact.StorageReference); err != nil && !errors.Is(err, lifecyclecontract.ErrArtifactContentNotFound) {
+		return false, err
+	}
+	metadata.ReferenceState = "deleted"
+	raw, err := encodeUploadArtifactMetadata(metadata)
+	if err != nil {
+		return false, err
+	}
+	changed, err := s.artifacts.Update(lifecycleArtifactContext(ctx), sharedartifact.Mutation{
+		WorkspaceID: artifact.WorkspaceID, ID: artifact.ID, Owner: artifact.Owner, Kind: artifact.Kind,
+		ExpectedStatus: artifact.Status, ExpectedScanStatus: artifact.ScanStatus,
+		Status: sharedartifact.StatusDeleted, ScanStatus: artifact.ScanStatus, Metadata: raw, UpdatedAt: now.UTC(),
+	})
+	if err != nil || changed {
+		return changed, err
+	}
+	current, found, err := s.artifacts.ByID(lifecycleArtifactContext(ctx), artifact.WorkspaceID, artifact.ID)
+	if err != nil {
+		return false, err
+	}
+	if found && current.Status == sharedartifact.StatusDeleted {
+		return false, nil
+	}
+	return false, fmt.Errorf("upload Artifact state changed while deleting terminal content")
 }
 
 func (s *FileArtifactStore) artifactReferenced(ctx context.Context, workspaceID, objectKey, fieldKey, filename string) (bool, error) {
@@ -347,60 +359,103 @@ func (s *FileArtifactStore) artifactReferenced(ctx context.Context, workspaceID,
 	return s.references.UploadArtifactReferenced(ctx, workspaceID, objectKey, fieldKey, filename)
 }
 
-func (s *FileArtifactStore) expireDownloadTasks(ctx context.Context, now time.Time, limit int) (int, error) {
-	if s.cleaner == nil {
-		return 0, nil
-	}
-	return s.cleaner.ExpireUploadReferences(ctx, now, limit)
-}
-
-func (s *FileArtifactStore) updateArtifactState(ctx context.Context, workspaceID, id, status string, referencedAt, deleteAfter time.Time) error {
-	lastReferenced, deletion := "", ""
-	if !referencedAt.IsZero() {
-		lastReferenced = referencedAt.UTC().Format(time.RFC3339Nano)
-	}
-	if !deleteAfter.IsZero() {
-		deletion = deleteAfter.UTC().Format(time.RFC3339Nano)
-	}
-	update := query.NewWorkspaceUpdateBuilder(s.renderer, "_lifecycle_file_artifacts", workspaceID).Set("status", status).Set("delete_after", deletion)
-	if lastReferenced != "" {
-		update.Set("last_referenced_at", lastReferenced)
-	}
-	queryValue, args, buildErr := update.Where(query.Equal("id", id)).Build()
-	if buildErr != nil {
-		return fmt.Errorf("build upload artifact state update: %w", buildErr)
-	}
-	_, err := s.database(ctx).ExecContext(ctx, queryValue, args...)
-	return err
-}
-
-func (s *FileArtifactStore) markArtifactDeleted(ctx context.Context, workspaceID, id string, now time.Time) error {
-	queryValue, args, buildErr := query.NewWorkspaceUpdateBuilder(s.renderer, "_lifecycle_file_artifacts", workspaceID).
-		Set("status", "deleted").Set("delete_after", "").Set("deleted_at", now.UTC().Format(time.RFC3339Nano)).Where(query.Equal("id", id)).Build()
-	if buildErr != nil {
-		return fmt.Errorf("build upload artifact deletion: %w", buildErr)
-	}
-	_, err := s.database(ctx).ExecContext(ctx, queryValue, args...)
-	return err
-}
-
-func (s *FileArtifactStore) artifactPath(workspaceID, filename string) (string, error) {
-	workspace, err := lifecycleaccess.NewWorkspaceID(workspaceID)
+func (s *FileArtifactStore) updateArtifact(ctx context.Context, artifact sharedartifact.Artifact, status sharedartifact.Status, expiresAt time.Time, metadata uploadArtifactMetadata, now time.Time) error {
+	raw, err := encodeUploadArtifactMetadata(metadata)
 	if err != nil {
-		return "", err
+		return err
 	}
-	if filename == "" || filepath.Base(filename) != filename {
-		return "", fmt.Errorf("invalid upload artifact filename")
+	changed, err := s.artifacts.Update(lifecycleArtifactContext(ctx), sharedartifact.Mutation{
+		WorkspaceID: artifact.WorkspaceID, ID: artifact.ID, Owner: artifact.Owner, Kind: artifact.Kind,
+		ExpectedStatus: artifact.Status, ExpectedScanStatus: artifact.ScanStatus, Status: status, ScanStatus: artifact.ScanStatus,
+		ExpiresAt: expiresAt, Metadata: raw, UpdatedAt: now.UTC(),
+	})
+	if err != nil {
+		return err
 	}
-	root, err := s.absPath(strings.TrimSpace(s.uploadRoot))
-	if err != nil || strings.TrimSpace(s.uploadRoot) == "" {
-		return "", fmt.Errorf("upload root is required")
+	if !changed {
+		return fmt.Errorf("upload Artifact state changed concurrently")
 	}
-	digest := sha256.Sum256([]byte(workspace.String()))
-	path := filepath.Join(root, "workspace-"+hex.EncodeToString(digest[:16]), filename)
-	relative, err := s.relPath(root, path)
-	if err != nil || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("upload artifact path escapes root")
-	}
-	return path, nil
+	return nil
 }
+
+func uploadArtifactFromShared(value sharedartifact.Artifact) (lifecyclecontract.UploadArtifact, error) {
+	if value.Owner != sharedartifact.OwnerUploads || value.Kind != "file" {
+		return lifecyclecontract.UploadArtifact{}, fmt.Errorf("shared Artifact is not an upload file")
+	}
+	metadata, err := decodeUploadArtifactMetadata(value.Metadata)
+	if err != nil {
+		return lifecyclecontract.UploadArtifact{}, err
+	}
+	return lifecyclecontract.UploadArtifact{
+		ID: value.ID, WorkspaceID: value.WorkspaceID, ObjectKey: metadata.ObjectKey, FieldKey: metadata.FieldKey,
+		Filename: value.Filename, ContentType: value.MediaType, SHA256: value.ContentSHA256, Size: value.SizeBytes, CreatedAt: value.CreatedAt,
+	}, nil
+}
+
+func fileScanEvidenceFromShared(value sharedartifact.Artifact) (lifecyclecontract.FileScanEvidence, error) {
+	upload, err := uploadArtifactFromShared(value)
+	if err != nil {
+		return lifecyclecontract.FileScanEvidence{}, err
+	}
+	metadata, err := decodeUploadArtifactMetadata(value.Metadata)
+	if err != nil {
+		return lifecyclecontract.FileScanEvidence{}, err
+	}
+	return lifecyclecontract.FileScanEvidence{
+		FileID: upload.ID, WorkspaceID: upload.WorkspaceID, Filename: upload.Filename, ContentType: upload.ContentType,
+		ObjectKey: upload.ObjectKey, FieldKey: upload.FieldKey, SHA256: upload.SHA256, Size: upload.Size,
+		Status: lifecycleScanStatus(value.ScanStatus), Provider: metadata.ScanProvider, EvidenceRef: metadata.ScanEvidenceRef, ScannedAt: metadata.ScannedAt,
+	}, nil
+}
+
+func sharedScanStatus(value string) (sharedartifact.ScanStatus, error) {
+	switch strings.TrimSpace(value) {
+	case lifecyclecontract.FileScanPending:
+		return sharedartifact.ScanPending, nil
+	case lifecyclecontract.FileScanClean:
+		return sharedartifact.ScanClean, nil
+	case lifecyclecontract.FileScanQuarantined:
+		return sharedartifact.ScanRejected, nil
+	case lifecyclecontract.FileScanFailed:
+		return sharedartifact.ScanFailed, nil
+	default:
+		return "", fmt.Errorf("file scan status is invalid")
+	}
+}
+
+func lifecycleScanStatus(value sharedartifact.ScanStatus) string {
+	switch value {
+	case sharedartifact.ScanClean:
+		return lifecyclecontract.FileScanClean
+	case sharedartifact.ScanRejected:
+		return lifecyclecontract.FileScanQuarantined
+	case sharedartifact.ScanFailed:
+		return lifecyclecontract.FileScanFailed
+	default:
+		return lifecyclecontract.FileScanPending
+	}
+}
+
+func encodeUploadArtifactMetadata(value uploadArtifactMetadata) (json.RawMessage, error) {
+	return json.Marshal(value)
+}
+
+func decodeUploadArtifactMetadata(raw json.RawMessage) (uploadArtifactMetadata, error) {
+	var value uploadArtifactMetadata
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return value, fmt.Errorf("decode upload Artifact metadata: %w", err)
+	}
+	value.ObjectKey, value.FieldKey, value.ReferenceState = strings.TrimSpace(value.ObjectKey), strings.TrimSpace(value.FieldKey), strings.TrimSpace(value.ReferenceState)
+	if value.ObjectKey == "" || value.FieldKey == "" {
+		return value, fmt.Errorf("upload Artifact owner metadata is incomplete")
+	}
+	switch value.ReferenceState {
+	case "staged", "referenced", "orphaned", "expired", "deleted":
+	default:
+		return value, fmt.Errorf("upload Artifact reference state is invalid")
+	}
+	return value, nil
+}
+
+var _ lifecyclecontract.UploadFileArtifactStore = (*FileArtifactStore)(nil)
+var _ lifecyclecontract.PendingFileScanStore = (*FileArtifactStore)(nil)

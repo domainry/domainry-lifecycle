@@ -11,8 +11,9 @@ import (
 	"testing"
 	"time"
 
+	auditcontract "github.com/domainry/domainry-audit-sdk/contract"
 	actioncontract "github.com/domainry/domainry-foundation/action"
-	"github.com/domainry/domainry-foundation/modulecapability"
+	sharedartifact "github.com/domainry/domainry-foundation/artifact"
 	"github.com/domainry/domainry-foundation/modulehttp"
 	identitysdk "github.com/domainry/domainry-identity-sdk"
 	lifecyclesdk "github.com/domainry/domainry-lifecycle-sdk"
@@ -23,6 +24,8 @@ import (
 	internalmodel "github.com/domainry/domainry-lifecycle/internal/domain/lifecycle/model"
 	lifecyclestore "github.com/domainry/domainry-lifecycle/internal/infrastructure/persistence/database/lifecycle"
 	migration "github.com/domainry/domainry-lifecycle/internal/infrastructure/persistence/database/migration"
+	artifactfixture "github.com/domainry/domainry-lifecycle/internal/testsupport/artifactfixture"
+	metadatasdk "github.com/domainry/domainry-metadata-sdk"
 	ormdialect "github.com/domainry/domainry-orm/dialect"
 	ormmigration "github.com/domainry/domainry-orm/migration"
 	_ "modernc.org/sqlite"
@@ -33,12 +36,62 @@ type integrationHost struct {
 	dialect      modulehost.Dialect
 	registrar    *integrationRegistrar
 	transactions modulehost.Transactor
+	definitions  metadatasdk.DefinitionStore
+	audit        *integrationAudit
+	artifacts    *artifactfixture.Store
+	content      *artifactfixture.Content
 }
 
 func (h integrationHost) Database() modulehost.Database             { return h.db }
 func (h integrationHost) Dialect() modulehost.Dialect               { return h.dialect }
 func (h integrationHost) Migrations() modulehost.MigrationRegistrar { return h.registrar }
 func (h integrationHost) Transactions() modulehost.Transactor       { return h.transactions }
+func (h integrationHost) DefinitionStore() metadatasdk.DefinitionStore {
+	return h.definitions
+}
+func (h integrationHost) AuditAppender() auditcontract.Appender {
+	if h.audit == nil {
+		return nil
+	}
+	return h.audit
+}
+func (h integrationHost) AuditTransactionalAppender() auditcontract.TransactionalAppender {
+	if h.audit == nil {
+		return nil
+	}
+	return h.audit
+}
+func (h integrationHost) ArtifactStore() sharedartifact.ManagedStore { return h.artifacts }
+func (h integrationHost) ArtifactContentStore() lifecyclecontract.ArtifactContentStore {
+	return h.content
+}
+func (h integrationHost) ArtifactContentWriter() lifecyclecontract.ArtifactContentWriter {
+	return h.content
+}
+
+type integrationAudit struct{ db *sql.DB }
+
+func (a *integrationAudit) Append(ctx context.Context, request auditcontract.AppendRequest) (auditcontract.Event, error) {
+	event, err := auditcontract.BuildEvent(request, time.Now().UTC())
+	if err != nil {
+		return event, err
+	}
+	metadata, _ := json.Marshal(event.Metadata)
+	after, _ := json.Marshal(event.After)
+	_, err = a.db.ExecContext(ctx, `INSERT INTO _audit_events (workspace_id,id,family,event,object_key,record_id,actor_id,summary,metadata_json,after_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, event.WorkspaceID, event.ID, event.Family, event.Event, event.ObjectKey, event.RecordID, event.ActorID, event.Summary, string(metadata), string(after), event.CreatedAt)
+	return event, err
+}
+
+func (*integrationAudit) AppendWithin(ctx context.Context, transaction auditcontract.Transaction, request auditcontract.AppendRequest) (auditcontract.Event, error) {
+	event, err := auditcontract.BuildEvent(request, time.Now().UTC())
+	if err != nil {
+		return event, err
+	}
+	metadata, _ := json.Marshal(event.Metadata)
+	after, _ := json.Marshal(event.After)
+	_, err = transaction.ExecContext(ctx, `INSERT INTO _audit_events (workspace_id,id,family,event,object_key,record_id,actor_id,summary,metadata_json,after_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, event.WorkspaceID, event.ID, event.Family, event.Event, event.ObjectKey, event.RecordID, event.ActorID, event.Summary, string(metadata), string(after), event.CreatedAt)
+	return event, err
+}
 
 type integrationMigrationCall struct {
 	owner      string
@@ -190,7 +243,13 @@ func newIntegrationHost(t *testing.T) integrationHost {
 		t.Fatal(err)
 	}
 	registrar := &integrationRegistrar{runner: runner}
-	return integrationHost{db: db, dialect: renderer, registrar: registrar, transactions: integrationTransactor{db: db}}
+	if _, err := db.ExecContext(t.Context(), `CREATE TABLE _audit_events (workspace_id TEXT NOT NULL, id TEXT NOT NULL, family TEXT NOT NULL, event TEXT NOT NULL, object_key TEXT NOT NULL, record_id TEXT NOT NULL, actor_id TEXT NOT NULL, summary TEXT NOT NULL, metadata_json TEXT NOT NULL, after_json TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (workspace_id,id))`); err != nil {
+		t.Fatal(err)
+	}
+	return integrationHost{
+		db: db, dialect: renderer, registrar: registrar, transactions: integrationTransactor{db: db}, definitions: newIntegrationDefinitionStore(t, db),
+		audit: &integrationAudit{db: db}, artifacts: artifactfixture.NewStore(), content: artifactfixture.NewContent(),
+	}
 }
 
 func integrationIdentityContext(ctx context.Context, principal lifecycleaccess.Principal, scope identitysdk.DataScope) context.Context {
@@ -202,6 +261,14 @@ func integrationIdentityContext(ctx context.Context, principal lifecycleaccess.P
 		bundle.DataPolicies = append(bundle.DataPolicies, identitysdk.DataPolicy{Key: "integration-" + permission, Resource: identitysdk.ResourceType(resource), Action: identitysdk.Action(action), Effect: identitysdk.EffectAllow, DataScopes: []identitysdk.DataScope{scope}})
 	}
 	return identitysdk.WithRequestIdentity(ctx, identitysdk.RequestIdentity{Principal: identitysdk.Principal{Known: true, WorkspaceID: principal.WorkspaceID, UserID: principal.UserID, AccessBundle: bundle}})
+}
+
+func TestModuleRequiresSharedAuditAppender(t *testing.T) {
+	host := newIntegrationHost(t)
+	host.audit = nil
+	if _, err := NewFactory().OpenModule(t.Context(), lifecyclesdk.ApplicationRef{RuntimeID: "missing-audit"}, host); err == nil || !strings.Contains(err.Error(), "shared Audit") {
+		t.Fatalf("missing shared Audit appender error=%v", err)
+	}
 }
 
 func TestBindingOwnsApplicationPersistenceAndHostTransaction(t *testing.T) {
@@ -254,16 +321,26 @@ func TestBindingOwnsApplicationPersistenceAndHostTransaction(t *testing.T) {
 		t.Fatalf("policies=%#v err=%v", policies, err)
 	}
 	var auditRows int
-	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _lifecycle_audit_evidence WHERE workspace_id = ?", "workspace-a").Scan(&auditRows); err != nil || auditRows != 1 {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _audit_events WHERE workspace_id = ?", "workspace-a").Scan(&auditRows); err != nil || auditRows != 1 {
 		t.Fatalf("audit rows=%d err=%v", auditRows, err)
 	}
+	var retiredAuditTables int
+	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='_lifecycle_audit_evidence'").Scan(&retiredAuditTables); err != nil || retiredAuditTables != 0 {
+		t.Fatalf("retired Lifecycle audit tables=%d err=%v", retiredAuditTables, err)
+	}
 	var migrationRows int
-	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _schema_migrations").Scan(&migrationRows); err != nil || migrationRows != 4 {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _schema_migrations").Scan(&migrationRows); err != nil || migrationRows != 2 {
 		t.Fatalf("migration ledger rows=%d err=%v", migrationRows, err)
 	}
 	calls := host.registrar.snapshot()
-	if len(calls) != 1 || calls[0].owner != migration.Owner || len(calls[0].migrations) != 4 {
+	if len(calls) != 1 || calls[0].owner != migration.Owner || len(calls[0].migrations) != 2 {
 		t.Fatalf("host migration registrations=%#v", calls)
+	}
+	for table, expected := range map[string]int{"_subject_requests": 1, "_lifecycle_subject_requests": 0} {
+		var count int
+		if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&count); err != nil || count != expected {
+			t.Fatalf("subject request table %s count=%d want=%d err=%v", table, count, expected, err)
+		}
 	}
 	if err := binding.BindOwners(t.Context(), lifecyclesdk.OwnerExtensions{}); err == nil {
 		t.Fatal("Lifecycle owner extensions were rebound")
@@ -284,24 +361,6 @@ func TestModuleSubjectExportBusinessContractEndToEnd(t *testing.T) {
 	if descriptor.Mode != lifecyclesdk.DeploymentModeModule {
 		t.Fatalf("Lifecycle deployment mode=%q", descriptor.Mode)
 	}
-	summary, err := binding.CapabilitySummary(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(summary.Identity.SupportedDeploymentModes) != 1 || summary.Identity.SupportedDeploymentModes[0] != modulecapability.DeploymentModeModule {
-		t.Fatalf("Lifecycle capability deployment modes=%v", summary.Identity.SupportedDeploymentModes)
-	}
-	if _, err := binding.ValidateCapabilityCandidate(t.Context(), modulecapability.ValidationRequest{
-		ContractVersion: modulecapability.ValidationContractVersion,
-		ModuleKey:       summary.Identity.Key,
-		CategoryKey:     lifecyclesdk.CapabilityLifecycleSubjects,
-		ContractSHA256:  summary.Identity.ContractSHA256,
-		Kind:            "lifecycle.subject_request",
-		Candidate:       modulecapability.AuthoringFragment{Collection: "subject_requests", Key: "request-a", Value: json.RawMessage(`{}`)},
-	}); err == nil || !strings.Contains(err.Error(), "module_capability.validation_scope_invalid") {
-		t.Fatalf("invented Lifecycle authoring validation scope error=%v", err)
-	}
-
 	// Applying the same source-owned migration inventory through the host again
 	// must reuse the host's only ledger instead of creating module-local state.
 	reopened, err := NewFactory().OpenModule(t.Context(), lifecyclesdk.ApplicationRef{RuntimeID: "subject-business-contract-reopen"}, host)
@@ -314,12 +373,12 @@ func TestModuleSubjectExportBusinessContractEndToEnd(t *testing.T) {
 		t.Fatalf("host migration registrations=%d", len(calls))
 	}
 	for _, call := range calls {
-		if call.owner != migration.Owner || len(call.migrations) != 4 {
+		if call.owner != migration.Owner || len(call.migrations) != 2 {
 			t.Fatalf("host migration registration=%#v", call)
 		}
 	}
 	var migrationRows, migrationLedgers int
-	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _schema_migrations").Scan(&migrationRows); err != nil || migrationRows != 4 {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _schema_migrations").Scan(&migrationRows); err != nil || migrationRows != 2 {
 		t.Fatalf("migration ledger rows=%d err=%v", migrationRows, err)
 	}
 	// SQLite's catalog is used only as dialect-focused integration evidence;
@@ -427,8 +486,15 @@ func TestModuleSubjectExportBusinessContractEndToEnd(t *testing.T) {
 		t.Fatalf("concurrent preview outcomes successes=%d conflicts=%d request=%#v", previewSuccesses, previewConflicts, previewed)
 	}
 	var previewAudits int
-	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _lifecycle_audit_evidence WHERE workspace_id = ? AND event = ? AND resource_id = ?", "workspace-a", "lifecycle.subject.previewed", created.ID).Scan(&previewAudits); err != nil || previewAudits != 1 {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _audit_events WHERE workspace_id = ? AND event = ? AND record_id = ?", "workspace-a", "lifecycle.subject.previewed", created.ID).Scan(&previewAudits); err != nil || previewAudits != 1 {
 		t.Fatalf("preview audit rows=%d err=%v", previewAudits, err)
+	}
+	var subjectAuditAfter string
+	if err := host.db.QueryRowContext(t.Context(), "SELECT after_json FROM _audit_events WHERE workspace_id = ? AND event = ? AND record_id = ?", "workspace-a", "lifecycle.subject.verified", created.ID).Scan(&subjectAuditAfter); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(subjectAuditAfter, "subject-1") || strings.Contains(subjectAuditAfter, "mfa-1") || !strings.Contains(subjectAuditAfter, `"status":"verified"`) {
+		t.Fatalf("subject Audit projection leaked private workflow fields: %s", subjectAuditAfter)
 	}
 
 	selfApprover := principalFor("requester", lifecyclesdk.ActionLifecycleSubjectRequestsApprove)
@@ -460,6 +526,25 @@ func TestModuleSubjectExportBusinessContractEndToEnd(t *testing.T) {
 	if succeeded.Status != lifecyclemodel.SubjectRequestSucceeded || succeeded.ExecutionAttempt != 2 || first.exportAttempts != 1 || second.exportAttempts != 2 {
 		t.Fatalf("retried execution request=%#v attempts=(%d,%d)", succeeded, first.exportAttempts, second.exportAttempts)
 	}
+	artifact, found, err := host.artifacts.ByID(t.Context(), "workspace-a", succeeded.ResultReference)
+	if err != nil || !found || artifact.Owner != sharedartifact.OwnerLifecycle || artifact.Kind != "subject_export" || artifact.Status != sharedartifact.StatusAvailable || !artifact.ExpiresAt.Equal(succeeded.DownloadExpiresAt) {
+		t.Fatalf("shared subject export Artifact=%#v found=%v err=%v", artifact, found, err)
+	}
+	bindings, err := host.artifacts.Bindings(t.Context(), "workspace-a", artifact.ID)
+	if err != nil || len(bindings) != 2 {
+		t.Fatalf("shared subject export bindings=%#v err=%v", bindings, err)
+	}
+	bound := map[string]string{}
+	for _, binding := range bindings {
+		bound[binding.Kind] = binding.ResourceID
+	}
+	if bound[sharedartifact.BindingJob] != succeeded.ID || bound[sharedartifact.BindingSubject] != succeeded.ResolvedIdentity {
+		t.Fatalf("shared subject export binding identities=%#v", bound)
+	}
+	contentInfo, err := host.content.Stat(t.Context(), "workspace-a", artifact.StorageReference)
+	if err != nil || contentInfo.SHA256 != artifact.ContentSHA256 || contentInfo.Size != artifact.SizeBytes {
+		t.Fatalf("shared subject export content=%#v err=%v", contentInfo, err)
+	}
 	if _, err := governance.ExecuteSubjectRequest(executeContext, "workspace-a", created.ID, executor); err == nil {
 		t.Fatal("terminal subject request accepted another execution transition")
 	}
@@ -478,21 +563,32 @@ func TestModuleSubjectExportBusinessContractEndToEnd(t *testing.T) {
 	}
 	var persistedStatus string
 	var persistedPayload string
-	if err := host.db.QueryRowContext(t.Context(), "SELECT status, payload_json FROM _lifecycle_subject_requests WHERE workspace_id = ? AND id = ?", "workspace-a", created.ID).Scan(&persistedStatus, &persistedPayload); err != nil {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT status, payload_json FROM _subject_requests WHERE workspace_id = ? AND id = ?", "workspace-a", created.ID).Scan(&persistedStatus, &persistedPayload); err != nil {
 		t.Fatal(err)
 	}
 	var persisted lifecyclemodel.SubjectRequest
 	if err := json.Unmarshal([]byte(persistedPayload), &persisted); err != nil {
 		t.Fatal(err)
 	}
-	if persistedStatus != string(lifecyclemodel.SubjectRequestSucceeded) || persisted.Status != lifecyclemodel.SubjectRequestSucceeded || persisted.ExecutionAttempt != 2 {
+	if persistedStatus != string(lifecyclemodel.SubjectRequestSucceeded) ||
+		persisted.Status != lifecyclemodel.SubjectRequestSucceeded ||
+		persisted.ResolvedIdentity != "subject-1" ||
+		persisted.RequestedBy != "requester" ||
+		persisted.VerifiedBy != "verifier" ||
+		persisted.ApprovedBy != "approver" ||
+		persisted.SecondFactorRef != "mfa-1" ||
+		persisted.Reason != "portability request" ||
+		len(persisted.ImpactPreview) == 0 ||
+		persisted.ResultReference == "" ||
+		!persisted.DownloadExpiresAt.After(persisted.UpdatedAt) ||
+		persisted.ExecutionAttempt != 2 {
 		t.Fatalf("persisted subject request=%#v status=%q", persisted, persistedStatus)
 	}
 	var stepRows, auditRows int
-	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _lifecycle_subject_execution_steps WHERE workspace_id = ? AND request_id = ?", "workspace-a", created.ID).Scan(&stepRows); err != nil || stepRows != 3 {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _subject_steps WHERE workspace_id = ? AND request_id = ?", "workspace-a", created.ID).Scan(&stepRows); err != nil || stepRows != 3 {
 		t.Fatalf("execution step rows=%d err=%v", stepRows, err)
 	}
-	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _lifecycle_audit_evidence WHERE workspace_id = ? AND resource_id = ?", "workspace-a", created.ID).Scan(&auditRows); err != nil || auditRows != 9 {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _audit_events WHERE workspace_id = ? AND record_id = ?", "workspace-a", created.ID).Scan(&auditRows); err != nil || auditRows != 9 {
 		t.Fatalf("subject audit rows=%d err=%v", auditRows, err)
 	}
 }
@@ -524,10 +620,10 @@ func TestModuleMutationRollsBackOnHostTransactionFailure(t *testing.T) {
 		}
 	}
 	var policyRows, auditRows int
-	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _lifecycle_policy_versions WHERE workspace_id = ? AND policy_key = ?", "workspace-a", policy.Policy.Key).Scan(&policyRows); err != nil {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _definitions WHERE owner = ? AND kind = ? AND source_id = ? AND name = ?", metadatasdk.DefinitionOwnerLifecycle, "retention_policy", "workspace-a", policy.Policy.Key).Scan(&policyRows); err != nil {
 		t.Fatal(err)
 	}
-	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _lifecycle_audit_evidence WHERE workspace_id = ? AND resource_id = ?", "workspace-a", policy.Policy.Key).Scan(&auditRows); err != nil {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _audit_events WHERE workspace_id = ? AND record_id = ?", "workspace-a", policy.Policy.Key).Scan(&auditRows); err != nil {
 		t.Fatal(err)
 	}
 	if policyRows != 0 || auditRows != 0 {
@@ -540,10 +636,10 @@ func TestModuleMutationRollsBackOnHostTransactionFailure(t *testing.T) {
 	if created.Status != lifecyclemodel.PolicyStatusPublished || created.Revision != 1 {
 		t.Fatalf("retried policy publication=%#v", created)
 	}
-	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _lifecycle_policy_versions WHERE workspace_id = ? AND policy_key = ?", "workspace-a", policy.Policy.Key).Scan(&policyRows); err != nil || policyRows != 1 {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _definitions WHERE owner = ? AND kind = ? AND source_id = ? AND name = ?", metadatasdk.DefinitionOwnerLifecycle, "retention_policy", "workspace-a", policy.Policy.Key).Scan(&policyRows); err != nil || policyRows != 1 {
 		t.Fatalf("retried policy rows=%d err=%v", policyRows, err)
 	}
-	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _lifecycle_audit_evidence WHERE workspace_id = ? AND resource_id = ?", "workspace-a", policy.Policy.Key).Scan(&auditRows); err != nil || auditRows != 1 {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _audit_events WHERE workspace_id = ? AND record_id = ?", "workspace-a", policy.Policy.Key).Scan(&auditRows); err != nil || auditRows != 1 {
 		t.Fatalf("retried audit rows=%d err=%v", auditRows, err)
 	}
 }
@@ -610,7 +706,7 @@ func TestSubjectExecutionRetryReusesCompletedOwnerSteps(t *testing.T) {
 		t.Fatalf("retried execution request=%#v attempts=(%d,%d)", request, first.exportAttempts, second.exportAttempts)
 	}
 	var stepRows int
-	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _lifecycle_subject_execution_steps WHERE workspace_id = ? AND request_id = ?", "workspace-a", request.ID).Scan(&stepRows); err != nil || stepRows != 3 {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _subject_steps WHERE workspace_id = ? AND request_id = ?", "workspace-a", request.ID).Scan(&stepRows); err != nil || stepRows != 3 {
 		t.Fatalf("execution step rows=%d err=%v", stepRows, err)
 	}
 }
@@ -636,13 +732,10 @@ func TestDeletionReplayPreflightsWholeBatchBeforeOwnerSideEffects(t *testing.T) 
 	store := lifecyclestore.NewLifecycleStore(host)
 	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
 	for _, request := range []internalmodel.SubjectRequest{
-		{ID: "request-a", WorkspaceID: "workspace-a", Kind: internalmodel.SubjectRequestErase, Status: internalmodel.SubjectRequestSucceeded, SubjectID: "subject-a", ResolvedIdentity: "identity-a", RequestedBy: "requester", CreatedAt: now, UpdatedAt: now},
-		{ID: "request-b", WorkspaceID: "workspace-a", Kind: internalmodel.SubjectRequestErase, Status: internalmodel.SubjectRequestSucceeded, SubjectID: "subject-b", ResolvedIdentity: "identity-b", RequestedBy: "requester", CreatedAt: now, UpdatedAt: now},
+		{ID: "request-a", WorkspaceID: "workspace-a", Kind: internalmodel.SubjectRequestErase, Status: internalmodel.SubjectRequestSucceeded, SubjectID: "subject-a", ResolvedIdentity: "identity-a", RequestedBy: "requester", BackupPending: true, ResultReference: "erase-evidence:request-a", CreatedAt: now, UpdatedAt: now},
+		{ID: "request-b", WorkspaceID: "workspace-a", Kind: internalmodel.SubjectRequestErase, Status: internalmodel.SubjectRequestSucceeded, SubjectID: "subject-b", ResolvedIdentity: "identity-b", RequestedBy: "requester", BackupPending: true, ResultReference: "erase-evidence:request-b", CreatedAt: now, UpdatedAt: now},
 	} {
 		if err := store.SaveSubjectRequest(t.Context(), request); err != nil {
-			t.Fatal(err)
-		}
-		if err := store.SaveDeletionRegistration(t.Context(), internalmodel.DeletionRegistration{RequestID: request.ID, WorkspaceID: request.WorkspaceID, ResolvedIdentity: request.ResolvedIdentity, BackupPending: true, UpdatedAt: now}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -661,7 +754,7 @@ func TestDeletionReplayPreflightsWholeBatchBeforeOwnerSideEffects(t *testing.T) 
 		t.Fatalf("owner side effects started before full-batch preflight: calls=%d", handler.calls)
 	}
 	var audits int
-	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _lifecycle_audit_evidence WHERE workspace_id = ? AND event = ?", "workspace-a", "lifecycle.deletion.replayed").Scan(&audits); err != nil || audits != 0 {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _audit_events WHERE workspace_id = ? AND event = ?", "workspace-a", "lifecycle.deletion.replayed").Scan(&audits); err != nil || audits != 0 {
 		t.Fatalf("replay audit rows=%d err=%v", audits, err)
 	}
 }
