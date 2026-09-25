@@ -56,7 +56,7 @@ func subjectExportArtifactID(workspaceID, requestID string) string {
 func (s *SubjectArtifactStore) PutSubjectExport(ctx context.Context, input lifecyclecontract.SubjectExportWrite) (result lifecyclecontract.SubjectExportReference, err error) {
 	input.WorkspaceID, input.RequestID = strings.TrimSpace(input.WorkspaceID), strings.TrimSpace(input.RequestID)
 	input.ResolvedIdentity, input.CreatedBy, input.OwnerOrgID = strings.TrimSpace(input.ResolvedIdentity), strings.TrimSpace(input.CreatedBy), strings.TrimSpace(input.OwnerOrgID)
-	input.ExpiresAt = input.ExpiresAt.UTC()
+	input.ExpiresAt = input.ExpiresAt.UTC().Truncate(time.Millisecond)
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
@@ -88,7 +88,7 @@ func (s *SubjectArtifactStore) PutSubjectExport(ctx context.Context, input lifec
 	if err != nil {
 		return result, err
 	}
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Millisecond)
 	value := sharedartifact.Artifact{
 		ID: artifactID, WorkspaceID: input.WorkspaceID, Owner: sharedartifact.OwnerLifecycle, Kind: "subject_export", IdempotencyKey: artifactID,
 		CreatedBy: input.CreatedBy, OwnerOrgID: input.OwnerOrgID, Filename: artifactID + ".json", MediaType: "application/json",
