@@ -199,7 +199,7 @@ func decodeRetentionPolicyDefinition(definition metadatasdk.Definition) (lifecyc
 
 func (s LifecycleStore) SaveLegalHold(ctx context.Context, hold lifecyclemodel.LegalHold) error {
 	payload, _ := json.Marshal(hold)
-	ends := ""
+	ends := int64(0)
 	if hold.EndsAt != nil {
 		ends = lifecycleTime(*hold.EndsAt)
 	}
@@ -268,7 +268,7 @@ func (s LifecycleStore) GetLegalHold(ctx context.Context, workspaceID, holdID st
 
 func (s LifecycleStore) UpdateLegalHold(ctx context.Context, hold lifecyclemodel.LegalHold, filter lifecyclepersistence.DataScopeFilter) (bool, error) {
 	payload, _ := json.Marshal(hold)
-	ends := ""
+	ends := int64(0)
 	if hold.EndsAt != nil {
 		ends = lifecycleTime(*hold.EndsAt)
 	}
@@ -293,7 +293,7 @@ func (s LifecycleStore) UpdateLegalHold(ctx context.Context, hold lifecyclemodel
 func (s LifecycleStore) ActiveLegalHolds(ctx context.Context, target lifecyclemodel.ResourceTarget, now time.Time) ([]lifecyclemodel.LegalHold, error) {
 	nowText := lifecycleTime(now)
 	queryValue, args, buildErr := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_legal_holds", target.WorkspaceID).Columns("payload_json").Where(query.And(
-		query.LessThanOrEqual("starts_at", nowText), query.Or(query.Equal("ends_at", ""), query.GreaterThan("ends_at", nowText)),
+		query.LessThanOrEqual("starts_at", nowText), query.Or(query.Equal("ends_at", int64(0)), query.GreaterThan("ends_at", nowText)),
 	)).Build()
 	if buildErr != nil {
 		return nil, fmt.Errorf("build active lifecycle legal holds query: %w", buildErr)
@@ -341,7 +341,8 @@ func (s LifecycleStore) GetCleanupJob(ctx context.Context, workspaceID, id strin
 	if buildErr != nil {
 		return lifecyclemodel.CleanupJob{}, false, fmt.Errorf("build lifecycle cleanup job query: %w", buildErr)
 	}
-	var operationID, status, checkpoint, leaseOwner, leaseExpiresAt, updatedAt, payload string
+	var operationID, status, checkpoint, leaseOwner, payload string
+	var leaseExpiresAt, updatedAt int64
 	var fencingToken int64
 	err := s.database(ctx).QueryRowContext(ctx, queryValue, args...).Scan(&operationID, &status, &checkpoint, &leaseOwner, &leaseExpiresAt, &fencingToken, &updatedAt, &payload)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -584,7 +585,7 @@ func (s LifecycleStore) ExpireSubjectExportReferences(ctx context.Context, scope
 	}
 	queryValue, args, buildErr := query.NewSelectBuilder(s.renderer, subjectRequestsTable).Columns("payload_json").Where(query.And(
 		query.Equal("kind", lifecyclemodel.SubjectRequestExport), query.Equal("status", lifecyclemodel.SubjectRequestSucceeded),
-		query.NotEqual("download_expires_at", ""), query.LessThanOrEqual("download_expires_at", lifecycleTime(now)),
+		query.NotEqual("download_expires_at", int64(0)), query.LessThanOrEqual("download_expires_at", lifecycleTime(now)),
 	)).Build()
 	if buildErr != nil {
 		return nil, fmt.Errorf("build expired lifecycle subject export query: %w", buildErr)
@@ -656,7 +657,7 @@ func (s LifecycleStore) SaveExternalErasures(ctx context.Context, erasures []lif
 		}
 		queryValue, args, buildErr = query.NewWorkspaceInsertBuilder(s.renderer, subjectRequestsTable, erasure.WorkspaceID).
 			Columns("id", "request_type", "kind", "status", "subject_id", "resolved_identity", "requested_by", "owner_org_id", "download_expires_at", "backup_pending", "updated_at", "payload_json").
-			Values(erasure.ID, lifecyclemodel.SubjectRequestTypeExternalErase, lifecyclemodel.SubjectRequestErase, erasure.Status, erasure.RequestID, parent.ResolvedIdentity, parent.RequestedBy, parent.OwnerOrgID, "", false, lifecycleTime(parent.UpdatedAt), string(payload)).Build()
+			Values(erasure.ID, lifecyclemodel.SubjectRequestTypeExternalErase, lifecyclemodel.SubjectRequestErase, erasure.Status, erasure.RequestID, parent.ResolvedIdentity, parent.RequestedBy, parent.OwnerOrgID, int64(0), false, lifecycleTime(parent.UpdatedAt), string(payload)).Build()
 		if buildErr != nil {
 			return fmt.Errorf("build external erasure insert: %w", buildErr)
 		}

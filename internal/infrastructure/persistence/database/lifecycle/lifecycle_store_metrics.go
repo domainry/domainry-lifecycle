@@ -18,14 +18,14 @@ func (s LifecycleStore) Metrics(ctx context.Context, workspaceID string, now tim
 	if buildErr != nil {
 		return metrics, buildErr
 	}
-	var oldest sql.NullString
+	var oldest sql.NullInt64
 	if err := s.database(ctx).QueryRowContext(ctx, queryValue, args...).Scan(&metrics.EligibleBacklog, &oldest); err != nil {
 		return metrics, err
 	}
 	if oldest.Valid {
-		metrics.OldestEligible, _ = time.Parse(time.RFC3339Nano, oldest.String)
+		metrics.OldestEligible = parseLifecycleTime(oldest.Int64)
 	}
-	queryValue, args, buildErr = query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_legal_holds", workspaceID).Projections(query.Project(query.CountAll())).Where(andPredicates(query.LessThanOrEqual("starts_at", lifecycleTime(now)), query.Or(query.Equal("ends_at", ""), query.GreaterThan("ends_at", lifecycleTime(now))), dataScopePredicate(filter, "created_by", "owner_org_id"))).Build()
+	queryValue, args, buildErr = query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_legal_holds", workspaceID).Projections(query.Project(query.CountAll())).Where(andPredicates(query.LessThanOrEqual("starts_at", lifecycleTime(now)), query.Or(query.Equal("ends_at", int64(0)), query.GreaterThan("ends_at", lifecycleTime(now))), dataScopePredicate(filter, "created_by", "owner_org_id"))).Build()
 	if buildErr != nil {
 		return metrics, buildErr
 	}
@@ -62,14 +62,16 @@ func (s LifecycleStore) Metrics(ctx context.Context, workspaceID string, now tim
 	return metrics, nil
 }
 
-func lifecycleTime(value time.Time) string {
+func lifecycleTime(value time.Time) int64 {
 	if value.IsZero() {
-		return ""
+		return 0
 	}
-	return value.UTC().Format(time.RFC3339Nano)
+	return value.UTC().UnixMilli()
 }
 
-func parseLifecycleTime(value string) time.Time {
-	result, _ := time.Parse(time.RFC3339Nano, value)
-	return result
+func parseLifecycleTime(value int64) time.Time {
+	if value == 0 {
+		return time.Time{}
+	}
+	return time.UnixMilli(value).UTC()
 }

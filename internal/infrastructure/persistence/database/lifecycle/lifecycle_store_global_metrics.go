@@ -23,15 +23,15 @@ func (s LifecycleStore) GlobalMetrics(ctx context.Context, scope lifecycleaccess
 	if buildErr != nil {
 		return metrics, fmt.Errorf("build lifecycle cleanup metrics query: %w", buildErr)
 	}
-	var oldest sql.NullString
+	var oldest sql.NullInt64
 	if err := s.database(ctx).QueryRowContext(ctx, queryValue, args...).Scan(&metrics.EligibleBacklog, &oldest); err != nil {
 		return metrics, err
 	}
 	if oldest.Valid {
-		metrics.OldestEligible = parseLifecycleTime(oldest.String)
+		metrics.OldestEligible = parseLifecycleTime(oldest.Int64)
 	}
 	queryValue, args, buildErr = query.NewSelectBuilder(s.renderer, "_lifecycle_legal_holds").Projections(query.Project(query.CountAll())).Where(query.And(
-		query.LessThanOrEqual("starts_at", lifecycleTime(now)), query.Or(query.Equal("ends_at", ""), query.GreaterThan("ends_at", lifecycleTime(now))),
+		query.LessThanOrEqual("starts_at", lifecycleTime(now)), query.Or(query.Equal("ends_at", int64(0)), query.GreaterThan("ends_at", lifecycleTime(now))),
 	)).Build()
 	if buildErr != nil {
 		return metrics, fmt.Errorf("build lifecycle legal hold metrics query: %w", buildErr)

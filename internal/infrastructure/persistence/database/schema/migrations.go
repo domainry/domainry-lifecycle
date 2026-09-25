@@ -79,10 +79,16 @@ func optionalKey(name string) ormschema.ColumnDefinition {
 func text(name string) ormschema.ColumnDefinition {
 	return ormschema.Column(name, ormschema.Text()).NotNull()
 }
+func millis(name string) ormschema.ColumnDefinition {
+	return ormschema.Column(name, ormschema.BigInt()).NotNull()
+}
+func optionalMillis(name string) ormschema.ColumnDefinition {
+	return ormschema.Column(name, ormschema.BigInt()).NotNull().DefaultValue(0)
+}
 func tables() []table {
 	return []table{
-		{LifecycleLegalHoldsTable, []ormschema.ColumnDefinition{key("id"), key("workspace_id"), optionalKey("owner"), optionalKey("resource_type"), optionalKey("resource_id"), optionalKey("created_by"), optionalKey("owner_org_id"), key("starts_at"), optionalKey("ends_at"), key("review_at"), text("payload_json")}, []string{"workspace_id", "id"}},
-		{LifecycleCleanupJobsTable, []ormschema.ColumnDefinition{key("id"), key("workspace_id"), optionalKey("operation_id"), optionalKey("requested_by"), optionalKey("owner_org_id"), key("policy_key"), key("policy_version"), key("status"), optionalKey("checkpoint_value"), optionalKey("lease_owner"), optionalKey("lease_expires_at"), ormschema.Column("fencing_token", ormschema.BigInt()).NotNull().DefaultValue(int64(0)), key("updated_at"), text("payload_json")}, []string{"workspace_id", "id"}},
+		{LifecycleLegalHoldsTable, []ormschema.ColumnDefinition{key("id"), key("workspace_id"), optionalKey("owner"), optionalKey("resource_type"), optionalKey("resource_id"), optionalKey("created_by"), optionalKey("owner_org_id"), millis("starts_at"), optionalMillis("ends_at"), millis("review_at"), text("payload_json")}, []string{"workspace_id", "id"}},
+		{LifecycleCleanupJobsTable, []ormschema.ColumnDefinition{key("id"), key("workspace_id"), optionalKey("operation_id"), optionalKey("requested_by"), optionalKey("owner_org_id"), key("policy_key"), key("policy_version"), key("status"), optionalKey("checkpoint_value"), optionalKey("lease_owner"), optionalMillis("lease_expires_at"), ormschema.Column("fencing_token", ormschema.BigInt()).NotNull().DefaultValue(int64(0)), millis("updated_at"), text("payload_json")}, []string{"workspace_id", "id"}},
 	}
 }
 

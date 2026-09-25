@@ -22,13 +22,13 @@ const uploadArtifactGracePeriod = 24 * time.Hour
 var errUploadArtifactIdentityConflict = errors.New("lifecycle upload artifact identity conflict")
 
 type uploadArtifactMetadata struct {
-	ObjectKey        string    `json:"object_key"`
-	FieldKey         string    `json:"field_key"`
-	ReferenceState   string    `json:"reference_state"`
-	ScanProvider     string    `json:"scan_provider,omitempty"`
-	ScanEvidenceRef  string    `json:"scan_evidence_ref,omitempty"`
-	ScannedAt        time.Time `json:"scanned_at,omitempty"`
-	LastReferencedAt time.Time `json:"last_referenced_at,omitempty"`
+	ObjectKey        string `json:"object_key"`
+	FieldKey         string `json:"field_key"`
+	ReferenceState   string `json:"reference_state"`
+	ScanProvider     string `json:"scan_provider,omitempty"`
+	ScanEvidenceRef  string `json:"scan_evidence_ref,omitempty"`
+	ScannedAt        int64  `json:"scanned_at,omitempty"`
+	LastReferencedAt int64  `json:"last_referenced_at,omitempty"`
 }
 
 type FileArtifactStore struct {
@@ -213,7 +213,7 @@ func (s *FileArtifactStore) RecordFileScan(ctx context.Context, evidence lifecyc
 	if err != nil {
 		return err
 	}
-	metadata.ScanProvider, metadata.ScanEvidenceRef, metadata.ScannedAt = strings.TrimSpace(evidence.Provider), strings.TrimSpace(evidence.EvidenceRef), evidence.ScannedAt.UTC()
+	metadata.ScanProvider, metadata.ScanEvidenceRef, metadata.ScannedAt = strings.TrimSpace(evidence.Provider), strings.TrimSpace(evidence.EvidenceRef), evidence.ScannedAt.UTC().UnixMilli()
 	raw, err := encodeUploadArtifactMetadata(metadata)
 	if err != nil {
 		return err
@@ -288,7 +288,7 @@ func (s *FileArtifactStore) ReconcileUploadArtifacts(ctx context.Context, scope 
 			return result, err
 		}
 		if referenced {
-			metadata.ReferenceState, metadata.LastReferencedAt = "referenced", now.UTC()
+			metadata.ReferenceState, metadata.LastReferencedAt = "referenced", now.UTC().UnixMilli()
 			if err := s.updateArtifact(ctx, artifact, sharedartifact.StatusAvailable, time.Time{}, metadata, now); err != nil {
 				return result, err
 			}
@@ -401,10 +401,14 @@ func fileScanEvidenceFromShared(value sharedartifact.Artifact) (lifecyclecontrac
 	if err != nil {
 		return lifecyclecontract.FileScanEvidence{}, err
 	}
+	scannedAt := time.Time{}
+	if metadata.ScannedAt != 0 {
+		scannedAt = time.UnixMilli(metadata.ScannedAt).UTC()
+	}
 	return lifecyclecontract.FileScanEvidence{
 		FileID: upload.ID, WorkspaceID: upload.WorkspaceID, Filename: upload.Filename, ContentType: upload.ContentType,
 		ObjectKey: upload.ObjectKey, FieldKey: upload.FieldKey, SHA256: upload.SHA256, Size: upload.Size,
-		Status: lifecycleScanStatus(value.ScanStatus), Provider: metadata.ScanProvider, EvidenceRef: metadata.ScanEvidenceRef, ScannedAt: metadata.ScannedAt,
+		Status: lifecycleScanStatus(value.ScanStatus), Provider: metadata.ScanProvider, EvidenceRef: metadata.ScanEvidenceRef, ScannedAt: scannedAt,
 	}, nil
 }
 
