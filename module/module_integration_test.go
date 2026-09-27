@@ -286,7 +286,7 @@ func newIntegrationHost(t *testing.T) integrationHost {
 	}
 	renderer := dialect.WithSchema("")
 	registrar := &integrationRegistrar{database: db}
-	if _, err := db.ExecContext(t.Context(), `CREATE TABLE _audit_events (workspace_id TEXT NOT NULL, id TEXT NOT NULL, family TEXT NOT NULL, event TEXT NOT NULL, object_key TEXT NOT NULL, record_id TEXT NOT NULL, actor_id TEXT NOT NULL, summary TEXT NOT NULL, metadata_json TEXT NOT NULL, after_json TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (workspace_id,id))`); err != nil {
+	if _, err := db.ExecContext(t.Context(), `CREATE TABLE _audit_events (workspace_id TEXT NOT NULL, id TEXT NOT NULL, family TEXT NOT NULL, event TEXT NOT NULL, object_key TEXT NOT NULL, record_id TEXT NOT NULL, actor_id TEXT NOT NULL, summary TEXT NOT NULL, metadata_json TEXT NOT NULL, after_json TEXT NOT NULL, created_at BIGINT NOT NULL, PRIMARY KEY (workspace_id,id))`); err != nil {
 		t.Fatal(err)
 	}
 	host := integrationHost{
