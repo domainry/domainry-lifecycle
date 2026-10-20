@@ -300,7 +300,7 @@ func writeError(w http.ResponseWriter, err error) {
 		}
 		retryable = sdkError.Retryable
 	}
-	telemetry.RecordHTTPStatusError(w, status, code)
+	telemetry.RecordHTTPStatusError(w, status, code, err)
 	writeJSON(w, status, map[string]any{"code": code, "retryable": retryable})
 }
 
