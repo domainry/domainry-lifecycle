@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/domainry/domainry-foundation/telemetry"
+	"github.com/domainry/domainry-foundation/httpresponse"
 	identitysdk "github.com/domainry/domainry-identity-sdk"
 	lifecyclesdk "github.com/domainry/domainry-lifecycle-sdk"
 	lifecycleaccess "github.com/domainry/domainry-lifecycle-sdk/access"
@@ -289,7 +289,7 @@ func writeResult(w http.ResponseWriter, result any, err error, status int) {
 }
 
 func writeError(w http.ResponseWriter, err error) {
-	status, code, retryable := http.StatusInternalServerError, "lifecycle.internal", false
+	status, code := http.StatusInternalServerError, "lifecycle.internal"
 	var sdkError *lifecyclesdk.Error
 	if errors.As(err, &sdkError) {
 		if sdkError.StatusCode != 0 {
@@ -298,24 +298,20 @@ func writeError(w http.ResponseWriter, err error) {
 		if strings.TrimSpace(sdkError.Code) != "" {
 			code = strings.TrimSpace(sdkError.Code)
 		}
-		retryable = sdkError.Retryable
 	}
-	telemetry.RecordHTTPStatusError(w, status, code, err)
-	writeJSON(w, status, map[string]any{"code": code, "retryable": retryable})
+	httpresponse.WriteError(w, nil, httpresponse.Failure{Status: status, Code: code, Cause: err})
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
+	httpresponse.WriteJSON(w, status, value)
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, value any) bool {
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(value); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"code": "lifecycle.request.invalid_json"})
+		httpresponse.WriteError(w, r, httpresponse.Failure{Status: http.StatusBadRequest, Code: "lifecycle.request.invalid_json", Cause: err})
 		return false
 	}
 	return true
