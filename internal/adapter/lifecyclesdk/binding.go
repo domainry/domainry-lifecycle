@@ -376,7 +376,7 @@ func adaptError(err error) error {
 		status, code = 409, "lifecycle.subject_request.independent_approval_required"
 	case strings.Contains(message, "transition") || strings.Contains(message, "lease is still active") || strings.Contains(message, "blocked"):
 		status, code = 409, "lifecycle.conflict"
-	case strings.Contains(message, "required") || strings.Contains(message, "unsupported") || strings.Contains(message, "invalid") || strings.Contains(message, "cannot") || strings.Contains(message, "must"):
+	case strings.Contains(message, "required") || strings.Contains(message, "requires") || strings.Contains(message, "unsupported") || strings.Contains(message, "invalid") || strings.Contains(message, "cannot") || strings.Contains(message, "must"):
 		status, code = 400, "lifecycle.invalid_request"
 	}
 	return &sdk.Error{StatusCode: status, Code: code, Cause: err}

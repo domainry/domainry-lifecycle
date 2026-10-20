@@ -17,3 +17,14 @@ func TestAdaptErrorMapsIndependentApprovalToStableConflict(t *testing.T) {
 		t.Fatalf("adapted error=%#v", lifecycleErr)
 	}
 }
+
+func TestAdaptErrorMapsRequirementFailuresToInvalidRequest(t *testing.T) {
+	err := adaptError(errors.New("retention shortening requires approval and change plan"))
+	var lifecycleErr *sdk.Error
+	if !errors.As(err, &lifecycleErr) {
+		t.Fatalf("adapted error type=%T", err)
+	}
+	if lifecycleErr.StatusCode != 400 || lifecycleErr.Code != "lifecycle.invalid_request" {
+		t.Fatalf("adapted error=%#v", lifecycleErr)
+	}
+}
