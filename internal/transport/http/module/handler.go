@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/domainry/domainry-foundation/telemetry"
 	identitysdk "github.com/domainry/domainry-identity-sdk"
 	lifecyclesdk "github.com/domainry/domainry-lifecycle-sdk"
 	lifecycleaccess "github.com/domainry/domainry-lifecycle-sdk/access"
@@ -299,6 +300,7 @@ func writeError(w http.ResponseWriter, err error) {
 		}
 		retryable = sdkError.Retryable
 	}
+	telemetry.RecordHTTPStatusError(w, status, code)
 	writeJSON(w, status, map[string]any{"code": code, "retryable": retryable})
 }
 
