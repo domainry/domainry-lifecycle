@@ -794,6 +794,8 @@ func TestDeletionReplayPreflightsWholeBatchBeforeOwnerSideEffects(t *testing.T) 
 	ctx := integrationIdentityContext(t.Context(), principal, identitysdk.DataScopeAll)
 	if replayed, err := binding.Governance().ReplayRegisteredDeletions(ctx, "workspace-a", 10, principal); err == nil || replayed != 0 {
 		t.Fatalf("replayed=%d err=%v", replayed, err)
+	} else if lifecycleErr, ok := err.(*lifecyclesdk.Error); !ok || lifecycleErr.Class != lifecyclesdk.ErrorClassConflict || lifecycleErr.Code != "lifecycle.legal_hold.active" {
+		t.Fatalf("legal-hold replay error=%#v", err)
 	}
 	if handler.calls != 0 {
 		t.Fatalf("owner side effects started before full-batch preflight: calls=%d", handler.calls)

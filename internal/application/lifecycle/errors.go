@@ -20,6 +20,10 @@ func lifecycleConflict(err error) error {
 	return apperror.New(apperror.KindConflict, "lifecycle.conflict", err, nil)
 }
 
+func lifecycleLegalHoldActive(err error) error {
+	return apperror.New(apperror.KindConflict, "lifecycle.legal_hold.active", err, nil)
+}
+
 func lifecycleUnavailable(err error) error {
 	return apperror.New(apperror.KindUnavailable, "lifecycle.unavailable", err, nil)
 }

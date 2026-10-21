@@ -65,7 +65,7 @@ func (s *LifecycleApplicationService) StageApprovedAccountErasure(ctx context.Co
 		return model.SubjectRequest{}, err
 	}
 	if len(holds) > 0 {
-		return model.SubjectRequest{}, lifecycleConflict(fmt.Errorf("account erasure blocked by legal hold"))
+		return model.SubjectRequest{}, lifecycleLegalHoldActive(fmt.Errorf("account erasure blocked by legal hold"))
 	}
 	now := time.Now().UTC()
 	request := model.SubjectRequest{ID: approval.RequestID, WorkspaceID: approval.WorkspaceID, RequestType: model.SubjectRequestTypeAccountErasure, Kind: model.SubjectRequestErase, Status: model.SubjectRequestApproved,

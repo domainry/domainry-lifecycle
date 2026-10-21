@@ -52,7 +52,7 @@ func (s subjectRequestErasure) ErasePreparedSubject(ctx context.Context, request
 		return nil, lifecycleForbidden(fmt.Errorf("Lifecycle erasure plan scope mismatch"))
 	}
 	if len(holds) > 0 {
-		return nil, lifecycleConflict(fmt.Errorf("Lifecycle erasure blocked by legal hold"))
+		return nil, lifecycleLegalHoldActive(fmt.Errorf("Lifecycle erasure blocked by legal hold"))
 	}
 	deleter, ok := s.artifacts.(contract.SubjectExportDeleter)
 	if !ok {

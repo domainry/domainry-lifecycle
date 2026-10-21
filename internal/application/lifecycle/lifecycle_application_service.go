@@ -425,7 +425,7 @@ func (s *LifecycleApplicationService) ExecuteSubjectRequest(ctx context.Context,
 		holds, err = s.legalHolds.ActiveLegalHolds(ctx, lifecyclemodel.ResourceTarget{WorkspaceID: workspaceID, Owner: "", ResourceType: "data_subject", ResourceID: executing.ResolvedIdentity}, executing.UpdatedAt)
 	}
 	if err == nil && executing.Kind == lifecyclemodel.SubjectRequestErase && len(holds) > 0 {
-		err = lifecycleConflict(fmt.Errorf("subject erasure blocked by legal hold"))
+		err = lifecycleLegalHoldActive(fmt.Errorf("subject erasure blocked by legal hold"))
 	}
 	// Freeze every external-cleanup plan before the first owner mutation.
 	// Persisting per-owner plans here preserves file pointers even if business

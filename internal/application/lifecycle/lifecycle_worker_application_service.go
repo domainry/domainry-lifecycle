@@ -50,7 +50,7 @@ func (s *LifecycleApplicationService) ReplayRegisteredDeletions(ctx context.Cont
 			return 0, err
 		}
 		if len(holds) > 0 {
-			return 0, lifecycleConflict(fmt.Errorf("backup deletion replay blocked by legal hold"))
+			return 0, lifecycleLegalHoldActive(fmt.Errorf("backup deletion replay blocked by legal hold"))
 		}
 	}
 	replayed := 0
