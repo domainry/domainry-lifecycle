@@ -53,6 +53,11 @@ func subjectExportArtifactID(workspaceID, requestID string) string {
 	return "lifecycle_subject_export_" + hex.EncodeToString(digest[:])
 }
 
+func subjectExportBindingID(artifactID, relation string) string {
+	digest := sha256.Sum256([]byte(strings.TrimSpace(artifactID) + "\x00" + strings.TrimSpace(relation)))
+	return "lifecycle_subject_binding_" + hex.EncodeToString(digest[:])
+}
+
 func (s *SubjectArtifactStore) PutSubjectExport(ctx context.Context, input lifecyclecontract.SubjectExportWrite) (result lifecyclecontract.SubjectExportReference, err error) {
 	input.WorkspaceID, input.RequestID = strings.TrimSpace(input.WorkspaceID), strings.TrimSpace(input.RequestID)
 	input.ResolvedIdentity, input.CreatedBy, input.OwnerOrgID = strings.TrimSpace(input.ResolvedIdentity), strings.TrimSpace(input.CreatedBy), strings.TrimSpace(input.OwnerOrgID)
@@ -108,8 +113,8 @@ func (s *SubjectArtifactStore) PutSubjectExport(ctx context.Context, input lifec
 			return fmt.Errorf("Lifecycle subject export Artifact identity conflict")
 		}
 		bindings := []sharedartifact.Binding{
-			{ID: artifactID + ":request", WorkspaceID: input.WorkspaceID, ArtifactID: artifactID, Owner: sharedartifact.OwnerLifecycle, Kind: sharedartifact.BindingJob, ResourceType: "lifecycle.subject_request", ResourceID: input.RequestID, Metadata: json.RawMessage(`{}`), CreatedAt: now},
-			{ID: artifactID + ":subject", WorkspaceID: input.WorkspaceID, ArtifactID: artifactID, Owner: sharedartifact.OwnerLifecycle, Kind: sharedartifact.BindingSubject, ResourceType: "data_subject", ResourceID: input.ResolvedIdentity, Metadata: json.RawMessage(`{}`), CreatedAt: now},
+			{ID: subjectExportBindingID(artifactID, "request"), WorkspaceID: input.WorkspaceID, ArtifactID: artifactID, Owner: sharedartifact.OwnerLifecycle, Kind: sharedartifact.BindingJob, ResourceType: "lifecycle.subject_request", ResourceID: input.RequestID, Metadata: json.RawMessage(`{}`), CreatedAt: now},
+			{ID: subjectExportBindingID(artifactID, "subject"), WorkspaceID: input.WorkspaceID, ArtifactID: artifactID, Owner: sharedartifact.OwnerLifecycle, Kind: sharedartifact.BindingSubject, ResourceType: "data_subject", ResourceID: input.ResolvedIdentity, Metadata: json.RawMessage(`{}`), CreatedAt: now},
 		}
 		for _, binding := range bindings {
 			if _, _, bindErr := s.artifacts.Bind(artifactCtx, binding); bindErr != nil {
