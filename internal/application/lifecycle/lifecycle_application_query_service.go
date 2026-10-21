@@ -88,7 +88,7 @@ func (s *LifecycleApplicationService) ReconcileExternalErasure(ctx context.Conte
 		return lifecyclemodel.ExternalErasure{}, err
 	}
 	if evidence == "" {
-		return lifecyclemodel.ExternalErasure{}, fmt.Errorf("provider reconciliation evidence is required")
+		return lifecyclemodel.ExternalErasure{}, lifecycleBadRequest(fmt.Errorf("provider reconciliation evidence is required"))
 	}
 	var item lifecyclemodel.ExternalErasure
 	err = s.withinTransaction(ctx, func(transactionContext context.Context) error {
@@ -99,7 +99,7 @@ func (s *LifecycleApplicationService) ReconcileExternalErasure(ctx context.Conte
 			return reconcileErr
 		}
 		if !found {
-			return fmt.Errorf("external erasure not found")
+			return lifecycleNotFound(fmt.Errorf("external erasure not found"))
 		}
 		return s.audit(transactionContext, principal.WorkspaceID, "lifecycle.external_erasure.reconciled", principal.UserID, item.ID, "", item)
 	})
@@ -124,7 +124,7 @@ func (s *LifecycleApplicationService) DownloadSubjectExport(ctx context.Context,
 		return nil, err
 	}
 	if request.Kind != lifecyclemodel.SubjectRequestExport || request.Status != lifecyclemodel.SubjectRequestSucceeded || request.DownloadExpiresAt.IsZero() || !now.Before(request.DownloadExpiresAt) || s.artifacts == nil {
-		return nil, fmt.Errorf("subject export unavailable or expired")
+		return nil, lifecycleUnavailable(fmt.Errorf("subject export unavailable or expired"))
 	}
 	payload, err := s.artifacts.ReadSubjectExport(ctx, workspaceID, request.ResultReference, now)
 	if err != nil {

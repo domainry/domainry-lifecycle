@@ -66,7 +66,7 @@ func (s *LifecycleApplicationService) PublishPolicy(ctx context.Context, version
 		return lifecyclemodel.PolicyVersion{}, err
 	}
 	if s == nil || s.policies == nil {
-		return lifecyclemodel.PolicyVersion{}, fmt.Errorf("lifecycle repository unavailable")
+		return lifecyclemodel.PolicyVersion{}, lifecycleUnavailable(fmt.Errorf("lifecycle repository unavailable"))
 	}
 	version.PublishedBy = principal.UserID
 	version.OwnerOrgID = filter.SubjectOrgID
@@ -87,7 +87,7 @@ func (s *LifecycleApplicationService) PublishPolicy(ctx context.Context, version
 			return err
 		}
 		if anyFound && !found {
-			return fmt.Errorf("auth.permission_denied")
+			return lifecycleForbidden(fmt.Errorf("auth.permission_denied"))
 		}
 		if found {
 			if version.Revision <= 0 {
@@ -126,7 +126,7 @@ func (s *LifecycleApplicationService) CreateLegalHold(ctx context.Context, hold 
 		return lifecyclemodel.LegalHold{}, err
 	}
 	if hold.WorkspaceID != principal.WorkspaceID {
-		return lifecyclemodel.LegalHold{}, fmt.Errorf("lifecycle workspace scope mismatch")
+		return lifecyclemodel.LegalHold{}, lifecycleForbidden(fmt.Errorf("lifecycle workspace scope mismatch"))
 	}
 	hold.ID = requestcontext.NewRequestID()
 	hold.CreatedBy, hold.OwnerOrgID = principal.UserID, filter.SubjectOrgID
@@ -153,10 +153,10 @@ func (s *LifecycleApplicationService) EndLegalHold(ctx context.Context, workspac
 		var err error
 		hold, found, err = s.legalHolds.GetLegalHold(transactionContext, workspaceID, holdID, filter)
 		if err != nil || !found {
-			return fmt.Errorf("legal hold not found")
+			return lifecycleNotFound(fmt.Errorf("legal hold not found"))
 		}
 		if strings.TrimSpace(authority) == "" || strings.TrimSpace(evidence) == "" || endedAt.IsZero() || !endedAt.After(hold.StartsAt) {
-			return fmt.Errorf("legal hold release authority, evidence and valid end are required")
+			return lifecycleBadRequest(fmt.Errorf("legal hold release authority, evidence and valid end are required"))
 		}
 		hold.Authority, hold.AuditEvidence, hold.EndsAt = strings.TrimSpace(authority), strings.TrimSpace(evidence), &endedAt
 		updated, err := s.legalHolds.UpdateLegalHold(transactionContext, hold, filter)
@@ -164,7 +164,7 @@ func (s *LifecycleApplicationService) EndLegalHold(ctx context.Context, workspac
 			return err
 		}
 		if !updated {
-			return fmt.Errorf("legal hold not found")
+			return lifecycleNotFound(fmt.Errorf("legal hold not found"))
 		}
 		return s.audit(transactionContext, workspaceID, "lifecycle.legal_hold.ended", principal.UserID, hold.ID, "", hold)
 	})
@@ -239,7 +239,7 @@ func (s *LifecycleApplicationService) InspectCleanupJob(ctx context.Context, wor
 		return lifecyclemodel.CleanupJob{}, err
 	}
 	if !found {
-		return lifecyclemodel.CleanupJob{}, fmt.Errorf("cleanup job not found")
+		return lifecyclemodel.CleanupJob{}, lifecycleNotFound(fmt.Errorf("cleanup job not found"))
 	}
 	return job, nil
 }
@@ -321,10 +321,10 @@ func (s *LifecycleApplicationService) CreateSubjectRequest(ctx context.Context, 
 	request.RequestedBy, request.OwnerOrgID, request.Status = principal.UserID, filter.SubjectOrgID, lifecyclemodel.SubjectRequestPendingVerification
 	request.CreatedAt, request.UpdatedAt = time.Now().UTC(), time.Now().UTC()
 	if request.Kind != lifecyclemodel.SubjectRequestExport && request.Kind != lifecyclemodel.SubjectRequestErase {
-		return lifecyclemodel.SubjectRequest{}, fmt.Errorf("unsupported subject request kind")
+		return lifecyclemodel.SubjectRequest{}, lifecycleBadRequest(fmt.Errorf("unsupported subject request kind"))
 	}
 	if request.SubjectID == "" || request.SubjectType == "" || request.Reason == "" {
-		return lifecyclemodel.SubjectRequest{}, fmt.Errorf("subject identity and reason are required")
+		return lifecyclemodel.SubjectRequest{}, lifecycleBadRequest(fmt.Errorf("subject identity and reason are required"))
 	}
 	err = s.withinTransaction(ctx, func(transactionContext context.Context) error {
 		if err := s.subjectRequests.SaveSubjectRequest(transactionContext, request); err != nil {
@@ -345,7 +345,7 @@ func (s *LifecycleApplicationService) VerifySubjectRequest(ctx context.Context, 
 		return lifecyclemodel.SubjectRequest{}, err
 	}
 	if s.resolver == nil {
-		return lifecyclemodel.SubjectRequest{}, fmt.Errorf("subject resolver unavailable")
+		return lifecyclemodel.SubjectRequest{}, lifecycleUnavailable(fmt.Errorf("subject resolver unavailable"))
 	}
 	resolved, err := s.resolver.ResolveSubject(ctx, workspaceID, request.SubjectType, request.SubjectID)
 	if err != nil {
@@ -425,7 +425,7 @@ func (s *LifecycleApplicationService) ExecuteSubjectRequest(ctx context.Context,
 		holds, err = s.legalHolds.ActiveLegalHolds(ctx, lifecyclemodel.ResourceTarget{WorkspaceID: workspaceID, Owner: "", ResourceType: "data_subject", ResourceID: executing.ResolvedIdentity}, executing.UpdatedAt)
 	}
 	if err == nil && executing.Kind == lifecyclemodel.SubjectRequestErase && len(holds) > 0 {
-		err = fmt.Errorf("subject erasure blocked by legal hold")
+		err = lifecycleConflict(fmt.Errorf("subject erasure blocked by legal hold"))
 	}
 	// Freeze every external-cleanup plan before the first owner mutation.
 	// Persisting per-owner plans here preserves file pointers even if business
@@ -447,7 +447,7 @@ func (s *LifecycleApplicationService) ExecuteSubjectRequest(ctx context.Context,
 				break
 			}
 			if !json.Valid(plan) {
-				err = fmt.Errorf("subject owner %s returned an invalid erasure plan", owner)
+				err = lifecycleBadRequest(fmt.Errorf("subject owner %s returned an invalid erasure plan", owner))
 				break
 			}
 			if err = s.saveSubjectExecutionStep(ctx, executing, owner, "erase_plan", plan, time.Now().UTC()); err != nil {
@@ -533,7 +533,7 @@ func (s *LifecycleApplicationService) ExecuteSubjectRequest(ctx context.Context,
 	raw, _ := json.Marshal(result)
 	if completed.Kind == lifecyclemodel.SubjectRequestExport {
 		if s.artifacts == nil {
-			err = fmt.Errorf("subject artifact store unavailable")
+			err = lifecycleUnavailable(fmt.Errorf("subject artifact store unavailable"))
 		} else {
 			var stored lifecyclecontract.SubjectExportReference
 			stored, err = s.artifacts.PutSubjectExport(ctx, lifecyclecontract.SubjectExportWrite{

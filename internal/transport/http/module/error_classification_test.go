@@ -1,6 +1,7 @@
 package modulehttptransport
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -18,21 +19,21 @@ func (capture *classificationCapture) RecordError(kind, code string) {
 
 func TestLifecycleErrorClassificationMatrix(t *testing.T) {
 	tests := []struct {
+		class  lifecyclesdk.ErrorClass
 		status int
 		kind   string
 		code   string
 	}{
-		{503, "unavailable", "lifecycle.database_unavailable"},
-		{502, "unavailable", "lifecycle.owner_dependency_unavailable"},
-		{409, "conflict", "lifecycle.execution_fence_rejected"},
-		{400, "bad_request", "lifecycle.validation_failed"},
-		{403, "forbidden", "lifecycle.permission_denied"},
+		{lifecyclesdk.ErrorClassUnavailable, http.StatusServiceUnavailable, "unavailable", "lifecycle.database_unavailable"},
+		{lifecyclesdk.ErrorClassConflict, http.StatusConflict, "conflict", "lifecycle.execution_fence_rejected"},
+		{lifecyclesdk.ErrorClassBadRequest, http.StatusBadRequest, "bad_request", "lifecycle.validation_failed"},
+		{lifecyclesdk.ErrorClassForbidden, http.StatusForbidden, "forbidden", "lifecycle.permission_denied"},
 	}
 	for _, test := range tests {
 		capture := &classificationCapture{ResponseRecorder: httptest.NewRecorder()}
-		writeError(capture, &lifecyclesdk.Error{StatusCode: test.status, Code: test.code})
-		if capture.kind != test.kind || capture.code != test.code {
-			t.Fatalf("status=%d kind=%q code=%q", test.status, capture.kind, capture.code)
+		writeError(capture, &lifecyclesdk.Error{Class: test.class, Code: test.code})
+		if capture.Code != test.status || capture.kind != test.kind || capture.code != test.code {
+			t.Fatalf("status=%d kind=%q code=%q", capture.Code, capture.kind, capture.code)
 		}
 	}
 }

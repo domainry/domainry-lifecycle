@@ -11,6 +11,7 @@ import (
 	"time"
 
 	actioncontract "github.com/domainry/domainry-foundation/action"
+	"github.com/domainry/domainry-foundation/apperror"
 	"github.com/domainry/domainry-foundation/modulehttp"
 	sdk "github.com/domainry/domainry-lifecycle-sdk"
 	"github.com/domainry/domainry-lifecycle-sdk/access"
@@ -52,10 +53,10 @@ func (*Binding) Descriptor() sdk.Descriptor {
 
 func (b *Binding) BindOwners(ctx context.Context, extensions sdk.OwnerExtensions) error {
 	if b == nil || b.host == nil {
-		return &sdk.Error{StatusCode: 503, Code: "lifecycle.binding_unavailable"}
+		return &sdk.Error{Class: sdk.ErrorClassUnavailable, Code: "lifecycle.binding_unavailable"}
 	}
 	if len(extensions.Executors) == 0 || extensions.SubjectResolver == nil || len(extensions.SubjectHandlers) == 0 || extensions.Artifacts == nil {
-		return &sdk.Error{StatusCode: 500, Code: "lifecycle.owner_extensions_incomplete"}
+		return &sdk.Error{Class: sdk.ErrorClassInternal, Code: "lifecycle.owner_extensions_incomplete"}
 	}
 	executorOwners := map[string]bool{}
 	for _, executor := range extensions.Executors {
@@ -64,7 +65,7 @@ func (b *Binding) BindOwners(ctx context.Context, extensions sdk.OwnerExtensions
 			owner = strings.TrimSpace(executor.Owner(ctx))
 		}
 		if owner == "" || executorOwners[owner] {
-			return &sdk.Error{StatusCode: 500, Code: "lifecycle.owner_executor_invalid"}
+			return &sdk.Error{Class: sdk.ErrorClassInternal, Code: "lifecycle.owner_executor_invalid"}
 		}
 		executorOwners[owner] = true
 	}
@@ -78,7 +79,7 @@ func (b *Binding) BindOwners(ctx context.Context, extensions sdk.OwnerExtensions
 			owner = strings.TrimSpace(handler.Owner(ctx))
 		}
 		if owner == "" || subjectOwners[owner] {
-			return &sdk.Error{StatusCode: 500, Code: "lifecycle.subject_handler_invalid"}
+			return &sdk.Error{Class: sdk.ErrorClassInternal, Code: "lifecycle.subject_handler_invalid"}
 		}
 		subjectOwners[owner] = true
 		subjectHandlers = append(subjectHandlers, handler)
@@ -86,7 +87,7 @@ func (b *Binding) BindOwners(ctx context.Context, extensions sdk.OwnerExtensions
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.bound {
-		return &sdk.Error{StatusCode: 409, Code: "lifecycle.owner_extensions_already_bound"}
+		return &sdk.Error{Class: sdk.ErrorClassConflict, Code: "lifecycle.owner_extensions_already_bound"}
 	}
 	service := lifecycleapplication.NewLifecycleApplicationService(ctx, lifecycleapplication.LifecycleApplicationDependencies{
 		Policies: b.repository, LegalHolds: b.repository, CleanupJobs: b.repository,
@@ -97,7 +98,7 @@ func (b *Binding) BindOwners(ctx context.Context, extensions sdk.OwnerExtensions
 	})
 	adapter, err := modulehttptransport.NewAdapter(governanceBinding{service: service})
 	if err != nil {
-		return &sdk.Error{StatusCode: 500, Code: "lifecycle.http_adapter_invalid", Cause: err}
+		return &sdk.Error{Class: sdk.ErrorClassInternal, Code: "lifecycle.http_adapter_invalid", Cause: err}
 	}
 	b.service = service
 	b.workers = lifecycleapplication.NewWorkerRunner(service)
@@ -153,7 +154,7 @@ func (b *Binding) application() *lifecycleapplication.LifecycleApplicationServic
 
 func (b *Binding) UploadArtifacts(options sdk.UploadArtifactOptions) (contract.UploadFileArtifactStore, error) {
 	if b == nil || b.host == nil || (strings.TrimSpace(options.Root) == "" && options.Content == nil) || options.Fields == nil {
-		return nil, &sdk.Error{StatusCode: 400, Code: "lifecycle.upload_artifact_options_invalid"}
+		return nil, &sdk.Error{Class: sdk.ErrorClassBadRequest, Code: "lifecycle.upload_artifact_options_invalid"}
 	}
 	storeOptions := make([]infra.FileArtifactStoreOption, 0, 2)
 	if options.References != nil {
@@ -174,7 +175,7 @@ func (b *Binding) SubjectArtifacts(root string, content ...contract.ArtifactCont
 		storage = content[0]
 	}
 	if strings.TrimSpace(root) == "" && storage == nil {
-		return nil, &sdk.Error{StatusCode: 400, Code: "lifecycle.subject_artifact_root_required"}
+		return nil, &sdk.Error{Class: sdk.ErrorClassBadRequest, Code: "lifecycle.subject_artifact_root_required"}
 	}
 	return infra.NewSubjectArtifactStore(b.host, root, storage), nil
 }
@@ -347,10 +348,10 @@ func convert[T any](value any) (T, error) {
 	var result T
 	payload, err := json.Marshal(value)
 	if err != nil {
-		return result, &sdk.Error{StatusCode: 500, Code: "lifecycle.contract_encode_failed", Cause: err}
+		return result, &sdk.Error{Class: sdk.ErrorClassInternal, Code: "lifecycle.contract_encode_failed", Cause: err}
 	}
 	if err := json.Unmarshal(payload, &result); err != nil {
-		return result, &sdk.Error{StatusCode: 500, Code: "lifecycle.contract_decode_failed", Cause: err}
+		return result, &sdk.Error{Class: sdk.ErrorClassInternal, Code: "lifecycle.contract_decode_failed", Cause: err}
 	}
 	return result, nil
 }
@@ -363,23 +364,11 @@ func adaptError(err error) error {
 	if errors.As(err, &target) {
 		return err
 	}
-	message := strings.ToLower(strings.TrimSpace(err.Error()))
-	status, code := 500, "lifecycle.internal"
-	switch {
-	case strings.Contains(message, "permission_denied") || strings.Contains(message, "scope mismatch"):
-		status, code = 403, "auth.permission_denied"
-	case strings.Contains(message, "not found"):
-		status, code = 404, "lifecycle.not_found"
-	case strings.Contains(message, "unavailable"):
-		status, code = 503, "lifecycle.unavailable"
-	case strings.Contains(message, "independent approval"):
-		status, code = 409, "lifecycle.subject_request.independent_approval_required"
-	case strings.Contains(message, "transition") || strings.Contains(message, "lease is still active") || strings.Contains(message, "blocked"):
-		status, code = 409, "lifecycle.conflict"
-	case strings.Contains(message, "required") || strings.Contains(message, "requires") || strings.Contains(message, "unsupported") || strings.Contains(message, "invalid") || strings.Contains(message, "cannot") || strings.Contains(message, "must"):
-		status, code = 400, "lifecycle.invalid_request"
+	return &sdk.Error{
+		Class: sdk.ErrorClass(apperror.KindOf(err)),
+		Code:  apperror.CodeOf(err),
+		Cause: err,
 	}
-	return &sdk.Error{StatusCode: status, Code: code, Cause: err}
 }
 
 var _ sdk.Binding = (*Binding)(nil)

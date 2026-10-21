@@ -13,7 +13,7 @@ import (
 
 func (s *LifecycleApplicationService) InstallDefaultPolicies(ctx context.Context, workspaceID string, principal lifecycleaccess.Principal, now time.Time) error {
 	if s == nil || s.policies == nil {
-		return fmt.Errorf("lifecycle repository unavailable")
+		return lifecycleUnavailable(fmt.Errorf("lifecycle repository unavailable"))
 	}
 	if err := lifecycleAuthorizeSystem(principal); err != nil {
 		return err

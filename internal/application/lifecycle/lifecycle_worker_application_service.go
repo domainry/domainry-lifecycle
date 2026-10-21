@@ -50,7 +50,7 @@ func (s *LifecycleApplicationService) ReplayRegisteredDeletions(ctx context.Cont
 			return 0, err
 		}
 		if len(holds) > 0 {
-			return 0, fmt.Errorf("backup deletion replay blocked by legal hold")
+			return 0, lifecycleConflict(fmt.Errorf("backup deletion replay blocked by legal hold"))
 		}
 	}
 	replayed := 0
@@ -79,7 +79,7 @@ func (s *LifecycleApplicationService) ReplayRegisteredDeletions(ctx context.Cont
 				return replayed, err
 			}
 			if !json.Valid(plan) {
-				return replayed, fmt.Errorf("invalid restore erasure plan")
+				return replayed, lifecycleBadRequest(fmt.Errorf("invalid restore erasure plan"))
 			}
 			request := lifecyclemodel.SubjectRequest{WorkspaceID: workspaceID, ID: registration.RequestID}
 			if err = s.saveSubjectExecutionStep(ctx, request, owner, "erase_plan", plan, time.Now().UTC()); err != nil {

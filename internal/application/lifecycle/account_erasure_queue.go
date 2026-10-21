@@ -18,17 +18,17 @@ import (
 func (s *LifecycleApplicationService) accountErasureRepository() (repository.AccountErasureRepository, error) {
 	repo, ok := s.subjectRequests.(repository.AccountErasureRepository)
 	if !ok {
-		return nil, fmt.Errorf("account erasure queue unavailable")
+		return nil, lifecycleUnavailable(fmt.Errorf("account erasure queue unavailable"))
 	}
 	return repo, nil
 }
 
 func validateAccountErasureScope(ctx context.Context, workspace string, scope access.SystemScope) error {
 	if scope.Kind != access.SystemScopeGlobal || !scope.Valid() {
-		return fmt.Errorf("account erasure requires trusted project Action scope")
+		return lifecycleForbidden(fmt.Errorf("account erasure requires trusted project Action scope"))
 	}
 	if strings.TrimSpace(workspace) == "" || workspace != requestcontext.WorkspaceID(ctx) {
-		return fmt.Errorf("account erasure workspace mismatch")
+		return lifecycleForbidden(fmt.Errorf("account erasure workspace mismatch"))
 	}
 	return nil
 }
@@ -38,15 +38,15 @@ func (s *LifecycleApplicationService) StageApprovedAccountErasure(ctx context.Co
 		return model.SubjectRequest{}, err
 	}
 	if modulehost.ExecutorFromContext(ctx, nil) == nil {
-		return model.SubjectRequest{}, fmt.Errorf("account erasure requires host Action transaction")
+		return model.SubjectRequest{}, lifecycleBadRequest(fmt.Errorf("account erasure requires host Action transaction"))
 	}
 	for _, value := range []string{approval.RequestID, approval.SubjectID, approval.RequestedBy, approval.ApprovedBy, approval.OwnerOrgID, approval.ActionKey, approval.ApprovalID, approval.BindingKey, approval.ObjectKey, approval.ProfileID} {
 		if strings.TrimSpace(value) == "" {
-			return model.SubjectRequest{}, fmt.Errorf("account erasure approval incomplete")
+			return model.SubjectRequest{}, lifecycleConflict(fmt.Errorf("account erasure approval incomplete"))
 		}
 	}
 	if approval.RequestedBy != approval.SubjectID || approval.ApprovedBy == approval.RequestedBy {
-		return model.SubjectRequest{}, fmt.Errorf("account erasure requires the subject's request and independent business approval")
+		return model.SubjectRequest{}, lifecycleConflict(fmt.Errorf("account erasure requires the subject's request and independent business approval"))
 	}
 	repo, err := s.accountErasureRepository()
 	if err != nil {
@@ -56,7 +56,7 @@ func (s *LifecycleApplicationService) StageApprovedAccountErasure(ctx context.Co
 		return model.SubjectRequest{}, err
 	} else if found {
 		if saved != approval {
-			return model.SubjectRequest{}, fmt.Errorf("account erasure request reused for another approval")
+			return model.SubjectRequest{}, lifecycleConflict(fmt.Errorf("account erasure request reused for another approval"))
 		}
 		return s.subjectRequest(ctx, approval.WorkspaceID, approval.RequestID, repository.UnrestrictedDataScopeFilter())
 	}
@@ -65,7 +65,7 @@ func (s *LifecycleApplicationService) StageApprovedAccountErasure(ctx context.Co
 		return model.SubjectRequest{}, err
 	}
 	if len(holds) > 0 {
-		return model.SubjectRequest{}, fmt.Errorf("account erasure blocked by legal hold")
+		return model.SubjectRequest{}, lifecycleConflict(fmt.Errorf("account erasure blocked by legal hold"))
 	}
 	now := time.Now().UTC()
 	request := model.SubjectRequest{ID: approval.RequestID, WorkspaceID: approval.WorkspaceID, RequestType: model.SubjectRequestTypeAccountErasure, Kind: model.SubjectRequestErase, Status: model.SubjectRequestApproved,
@@ -97,17 +97,17 @@ func (s *LifecycleApplicationService) GetAccountErasure(ctx context.Context, ref
 	}
 	if !found || strings.TrimSpace(reference.OwnerOrgID) == "" || approval.OwnerOrgID != reference.OwnerOrgID ||
 		approval.BindingKey != reference.BindingKey || approval.ObjectKey != reference.ObjectKey || approval.ProfileID != reference.ProfileID {
-		return model.SubjectRequest{}, fmt.Errorf("account erasure approval not in authorized profile and organization")
+		return model.SubjectRequest{}, lifecycleForbidden(fmt.Errorf("account erasure approval not in authorized profile and organization"))
 	}
 	return s.subjectRequest(ctx, reference.WorkspaceID, reference.RequestID, repository.UnrestrictedDataScopeFilter())
 }
 
 func (s *LifecycleApplicationService) ProcessApprovedAccountErasures(ctx context.Context, leaseOwner string, limit int, now time.Time, scope access.SystemScope) (int, error) {
 	if !scope.Valid() || scope.Kind != access.SystemScopeGlobal || strings.TrimSpace(leaseOwner) == "" {
-		return 0, fmt.Errorf("account erasure worker scope invalid")
+		return 0, lifecycleBadRequest(fmt.Errorf("account erasure worker scope invalid"))
 	}
 	if modulehost.ExecutorFromContext(ctx, nil) != nil {
-		return 0, fmt.Errorf("account erasure effects cannot run inside an Action transaction")
+		return 0, lifecycleBadRequest(fmt.Errorf("account erasure effects cannot run inside an Action transaction"))
 	}
 	repo, err := s.accountErasureRepository()
 	if err != nil {

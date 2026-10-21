@@ -34,11 +34,11 @@ func (s subjectRequestErasure) ExportSubjectForRequest(context.Context, string, 
 	return json.RawMessage(`{}`), nil
 }
 func (s subjectRequestErasure) EraseSubjectForRequest(context.Context, string, string, string, []sdkmodel.LegalHold) (json.RawMessage, error) {
-	return nil, fmt.Errorf("Lifecycle erasure requires a persisted plan")
+	return nil, lifecycleBadRequest(fmt.Errorf("Lifecycle erasure requires a persisted plan"))
 }
 func (s subjectRequestErasure) PrepareSubjectErasure(ctx context.Context, requestID, workspaceID, subjectID string) (json.RawMessage, error) {
 	if _, ok := s.artifacts.(contract.SubjectExportDeleter); !ok {
-		return nil, fmt.Errorf("subject export deletion unavailable")
+		return nil, lifecycleUnavailable(fmt.Errorf("subject export deletion unavailable"))
 	}
 	exports, err := s.repository.BeginSubjectErasure(ctx, requestID, workspaceID, subjectID)
 	if err != nil {
@@ -49,14 +49,14 @@ func (s subjectRequestErasure) PrepareSubjectErasure(ctx context.Context, reques
 func (s subjectRequestErasure) ErasePreparedSubject(ctx context.Context, requestID, workspaceID, subjectID string, raw json.RawMessage, holds []sdkmodel.LegalHold) (json.RawMessage, error) {
 	var plan subjectRequestErasurePlan
 	if json.Unmarshal(raw, &plan) != nil || requestID == "" || plan.RequestID != requestID || plan.WorkspaceID != workspaceID || plan.SubjectID != subjectID {
-		return nil, fmt.Errorf("Lifecycle erasure plan scope mismatch")
+		return nil, lifecycleForbidden(fmt.Errorf("Lifecycle erasure plan scope mismatch"))
 	}
 	if len(holds) > 0 {
-		return nil, fmt.Errorf("Lifecycle erasure blocked by legal hold")
+		return nil, lifecycleConflict(fmt.Errorf("Lifecycle erasure blocked by legal hold"))
 	}
 	deleter, ok := s.artifacts.(contract.SubjectExportDeleter)
 	if !ok {
-		return nil, fmt.Errorf("subject export deletion unavailable")
+		return nil, lifecycleUnavailable(fmt.Errorf("subject export deletion unavailable"))
 	}
 	if err := s.repository.EraseSubjectRequestData(ctx, requestID, workspaceID, subjectID); err != nil {
 		return nil, err

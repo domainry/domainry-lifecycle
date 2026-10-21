@@ -44,7 +44,7 @@ func AuthorizationActions() ([]actioncontract.ActionDefinition, error) {
 	for _, definition := range definitions {
 		normalized, err := actioncontract.NormalizeDefinition(definition)
 		if err != nil {
-			return nil, fmt.Errorf("normalize Lifecycle Action %q: %w", definition.Key, err)
+			return nil, lifecycleInternal(fmt.Errorf("normalize Lifecycle Action %q: %w", definition.Key, err))
 		}
 		result = append(result, normalized)
 	}

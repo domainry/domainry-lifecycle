@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/domainry/domainry-foundation/apperror"
 	"github.com/domainry/domainry-foundation/httpresponse"
 	identitysdk "github.com/domainry/domainry-identity-sdk"
 	lifecyclesdk "github.com/domainry/domainry-lifecycle-sdk"
@@ -289,17 +290,33 @@ func writeResult(w http.ResponseWriter, result any, err error, status int) {
 }
 
 func writeError(w http.ResponseWriter, err error) {
-	status, code := http.StatusInternalServerError, "lifecycle.internal"
+	status, code := lifecycleHTTPStatus(apperror.KindOf(err)), "lifecycle.internal"
 	var sdkError *lifecyclesdk.Error
 	if errors.As(err, &sdkError) {
-		if sdkError.StatusCode != 0 {
-			status = sdkError.StatusCode
-		}
 		if strings.TrimSpace(sdkError.Code) != "" {
 			code = strings.TrimSpace(sdkError.Code)
 		}
 	}
 	httpresponse.WriteError(w, nil, httpresponse.Failure{Status: status, Code: code, Cause: err})
+}
+
+func lifecycleHTTPStatus(kind apperror.ErrorKind) int {
+	switch kind {
+	case apperror.KindBadRequest:
+		return http.StatusBadRequest
+	case apperror.KindForbidden:
+		return http.StatusForbidden
+	case apperror.KindNotFound:
+		return http.StatusNotFound
+	case apperror.KindConflict:
+		return http.StatusConflict
+	case apperror.KindRateLimited:
+		return http.StatusTooManyRequests
+	case apperror.KindUnavailable:
+		return http.StatusServiceUnavailable
+	default:
+		return http.StatusInternalServerError
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

@@ -11,35 +11,35 @@ import (
 
 func ValidateRetentionPolicy(policy lifecyclemodel.RetentionPolicy) error {
 	if strings.TrimSpace(policy.Key) == "" || strings.TrimSpace(policy.Version) == "" || strings.TrimSpace(policy.Owner) == "" {
-		return fmt.Errorf("retention policy key, version, and owner are required")
+		return invalidLifecycleRequest(fmt.Errorf("retention policy key, version, and owner are required"))
 	}
 	switch policy.Class {
 	case lifecyclemodel.RetentionClassProduct, lifecyclemodel.RetentionClassLegalAudit, lifecyclemodel.RetentionClassTechnical, lifecyclemodel.RetentionClassUserErase:
 	default:
-		return fmt.Errorf("unsupported retention class %q", policy.Class)
+		return invalidLifecycleRequest(fmt.Errorf("unsupported retention class %q", policy.Class))
 	}
 	if policy.DefaultRetention <= 0 || policy.MinimumRetention <= 0 {
-		return fmt.Errorf("retention durations must be positive")
+		return invalidLifecycleRequest(fmt.Errorf("retention durations must be positive"))
 	}
 	if policy.DefaultRetention < policy.MinimumRetention {
-		return fmt.Errorf("default retention cannot be shorter than minimum retention")
+		return invalidLifecycleRequest(fmt.Errorf("default retention cannot be shorter than minimum retention"))
 	}
 	if policy.ReplayWindow > 0 && (policy.DefaultRetention < policy.ReplayWindow || policy.MinimumRetention < policy.ReplayWindow) {
-		return fmt.Errorf("retention cannot be shorter than the declared replay window")
+		return invalidLifecycleRequest(fmt.Errorf("retention cannot be shorter than the declared replay window"))
 	}
 	for status, retention := range policy.StatusRetention {
 		if strings.TrimSpace(status) == "" || retention < policy.MinimumRetention {
-			return fmt.Errorf("status retention must name a status group and meet the policy minimum")
+			return invalidLifecycleRequest(fmt.Errorf("status retention must name a status group and meet the policy minimum"))
 		}
 	}
 	if policy.WorkspaceMayReduce && (policy.Class == lifecyclemodel.RetentionClassLegalAudit || containsSensitivity(policy.Sensitivity, lifecyclemodel.SensitivityAudit) || containsSensitivity(policy.Sensitivity, lifecyclemodel.SensitivitySecurity)) {
-		return fmt.Errorf("legal, audit, and security retention cannot be reduced by a workspace")
+		return invalidLifecycleRequest(fmt.Errorf("legal, audit, and security retention cannot be reduced by a workspace"))
 	}
 	if policy.Class == lifecyclemodel.RetentionClassUserErase && policy.EraseBehavior == lifecyclemodel.EraseBehaviorNotEligible {
-		return fmt.Errorf("user erase policy must define delete or anonymize behavior")
+		return invalidLifecycleRequest(fmt.Errorf("user erase policy must define delete or anonymize behavior"))
 	}
 	if policy.BackupBehavior == "" || policy.EraseBehavior == "" {
-		return fmt.Errorf("backup and erase behavior are required")
+		return invalidLifecycleRequest(fmt.Errorf("backup and erase behavior are required"))
 	}
 	return nil
 }
@@ -49,16 +49,16 @@ func EffectiveWorkspaceRetention(policy lifecyclemodel.RetentionPolicy, override
 		return 0, err
 	}
 	if strings.TrimSpace(override.WorkspaceID) == "" || override.Retention <= 0 {
-		return 0, fmt.Errorf("workspace and positive retention are required")
+		return 0, invalidLifecycleRequest(fmt.Errorf("workspace and positive retention are required"))
 	}
 	if override.Retention < policy.DefaultRetention && !policy.WorkspaceMayReduce {
-		return 0, fmt.Errorf("workspace retention cannot reduce policy default")
+		return 0, invalidLifecycleRequest(fmt.Errorf("workspace retention cannot reduce policy default"))
 	}
 	if override.Retention > policy.DefaultRetention && !policy.WorkspaceMayExtend {
-		return 0, fmt.Errorf("workspace retention cannot extend policy default")
+		return 0, invalidLifecycleRequest(fmt.Errorf("workspace retention cannot extend policy default"))
 	}
 	if override.Retention < policy.MinimumRetention {
-		return 0, fmt.Errorf("workspace retention cannot be shorter than policy minimum")
+		return 0, invalidLifecycleRequest(fmt.Errorf("workspace retention cannot be shorter than policy minimum"))
 	}
 	return override.Retention, nil
 }
@@ -68,13 +68,13 @@ func ValidatePolicyPublication(previous *lifecyclemodel.PolicyVersion, next life
 		return err
 	}
 	if next.Status != lifecyclemodel.PolicyStatusPublished || next.Revision <= 0 || strings.TrimSpace(next.PublishedBy) == "" || next.PublishedAt.IsZero() {
-		return fmt.Errorf("published policy requires revision, publisher, and publication time")
+		return invalidLifecycleRequest(fmt.Errorf("published policy requires revision, publisher, and publication time"))
 	}
 	if previous == nil {
 		return nil
 	}
 	if next.Revision != previous.Revision+1 {
-		return fmt.Errorf("policy revision must increase by one")
+		return invalidLifecycleRequest(fmt.Errorf("policy revision must increase by one"))
 	}
 	shortened := next.Policy.DefaultRetention < previous.Policy.DefaultRetention || next.Policy.MinimumRetention < previous.Policy.MinimumRetention || next.Policy.ReplayWindow < previous.Policy.ReplayWindow
 	for status, retention := range previous.Policy.StatusRetention {
@@ -83,81 +83,81 @@ func ValidatePolicyPublication(previous *lifecyclemodel.PolicyVersion, next life
 		}
 	}
 	if shortened && (strings.TrimSpace(next.ApprovalRef) == "" || strings.TrimSpace(next.ChangePlanRef) == "") {
-		return fmt.Errorf("retention shortening requires approval and change plan")
+		return invalidLifecycleRequest(fmt.Errorf("retention shortening requires approval and change plan"))
 	}
 	return nil
 }
 
 func ValidateCleanupJob(job lifecyclemodel.CleanupJob) error {
 	if strings.TrimSpace(job.ID) == "" || strings.TrimSpace(job.WorkspaceID) == "" || strings.TrimSpace(job.PolicyKey) == "" || strings.TrimSpace(job.PolicyVersion) == "" || strings.TrimSpace(job.RequestedBy) == "" || strings.TrimSpace(job.Reason) == "" {
-		return fmt.Errorf("cleanup identity, workspace, policy, requester, and reason are required")
+		return invalidLifecycleRequest(fmt.Errorf("cleanup identity, workspace, policy, requester, and reason are required"))
 	}
 	if job.Operation != lifecyclemodel.OperationArchive && job.Operation != lifecyclemodel.OperationPurge {
-		return fmt.Errorf("cleanup operation must be archive or purge")
+		return invalidLifecycleRequest(fmt.Errorf("cleanup operation must be archive or purge"))
 	}
 	if job.Status == "" || job.CreatedAt.IsZero() || job.UpdatedAt.IsZero() {
-		return fmt.Errorf("cleanup status and timestamps are required")
+		return invalidLifecycleRequest(fmt.Errorf("cleanup status and timestamps are required"))
 	}
 	return nil
 }
 
 func TransitionSubjectRequest(current, next lifecyclemodel.SubjectRequest) error {
 	if current.ID == "" || next.ID != current.ID || current.WorkspaceID == "" || next.WorkspaceID != current.WorkspaceID || next.UpdatedAt.IsZero() || next.UpdatedAt.Before(current.UpdatedAt) {
-		return fmt.Errorf("subject request identity and monotonic update are required")
+		return invalidLifecycleRequest(fmt.Errorf("subject request identity and monotonic update are required"))
 	}
 	switch {
 	case current.Status == lifecyclemodel.SubjectRequestPendingVerification && next.Status == lifecyclemodel.SubjectRequestVerified:
 		if strings.TrimSpace(next.ResolvedIdentity) == "" || strings.TrimSpace(next.VerifiedBy) == "" || strings.TrimSpace(next.SecondFactorRef) == "" {
-			return fmt.Errorf("subject verification requires resolved identity, verifier, and second factor")
+			return invalidLifecycleRequest(fmt.Errorf("subject verification requires resolved identity, verifier, and second factor"))
 		}
 	case current.Status == lifecyclemodel.SubjectRequestVerified && next.Status == lifecyclemodel.SubjectRequestPreviewed:
 		if len(next.ImpactPreview) == 0 {
-			return fmt.Errorf("subject request preview evidence is required")
+			return invalidLifecycleRequest(fmt.Errorf("subject request preview evidence is required"))
 		}
 	case current.Status == lifecyclemodel.SubjectRequestPreviewed && next.Status == lifecyclemodel.SubjectRequestApproved:
 		if strings.TrimSpace(next.ApprovedBy) == "" || next.ApprovedBy == next.RequestedBy {
-			return fmt.Errorf("subject request requires independent approval")
+			return conflictingLifecycleRequest("lifecycle.subject_request.independent_approval_required", fmt.Errorf("subject request requires independent approval"))
 		}
 	case (current.Status == lifecyclemodel.SubjectRequestApproved || current.Status == lifecyclemodel.SubjectRequestFailed) && next.Status == lifecyclemodel.SubjectRequestExecuting:
 		if next.ExecutionAttempt != current.ExecutionAttempt+1 || !next.ExecutionLeaseEnd.After(next.UpdatedAt) || next.LastError != "" {
-			return fmt.Errorf("subject execution requires a new leased attempt")
+			return invalidLifecycleRequest(fmt.Errorf("subject execution requires a new leased attempt"))
 		}
 	case current.Status == lifecyclemodel.SubjectRequestExecuting && next.Status == lifecyclemodel.SubjectRequestExecuting:
 		if current.ExecutionLeaseEnd.IsZero() || next.UpdatedAt.Before(current.ExecutionLeaseEnd) || next.ExecutionAttempt != current.ExecutionAttempt+1 || !next.ExecutionLeaseEnd.After(next.UpdatedAt) || next.LastError != "" {
-			return fmt.Errorf("subject execution lease is still active")
+			return conflictingLifecycleRequest("lifecycle.subject_request.execution_lease_active", fmt.Errorf("subject execution lease is still active"))
 		}
 	case current.Status == lifecyclemodel.SubjectRequestExecuting && next.Status == lifecyclemodel.SubjectRequestSucceeded:
 		if strings.TrimSpace(next.ResultReference) == "" {
-			return fmt.Errorf("successful subject request requires result evidence")
+			return invalidLifecycleRequest(fmt.Errorf("successful subject request requires result evidence"))
 		}
 		if next.Kind == lifecyclemodel.SubjectRequestExport && (next.DownloadExpiresAt.IsZero() || !next.DownloadExpiresAt.After(next.UpdatedAt)) {
-			return fmt.Errorf("subject export requires expiring download")
+			return invalidLifecycleRequest(fmt.Errorf("subject export requires expiring download"))
 		}
 		if !next.ExecutionLeaseEnd.IsZero() {
-			return fmt.Errorf("successful subject request must release its execution lease")
+			return invalidLifecycleRequest(fmt.Errorf("successful subject request must release its execution lease"))
 		}
 	case current.Status == lifecyclemodel.SubjectRequestExecuting && next.Status == lifecyclemodel.SubjectRequestFailed:
 		if strings.TrimSpace(next.LastError) == "" {
-			return fmt.Errorf("failed subject request requires error evidence")
+			return invalidLifecycleRequest(fmt.Errorf("failed subject request requires error evidence"))
 		}
 		if !next.ExecutionLeaseEnd.IsZero() {
-			return fmt.Errorf("failed subject request must release its execution lease")
+			return invalidLifecycleRequest(fmt.Errorf("failed subject request must release its execution lease"))
 		}
 	default:
-		return fmt.Errorf("invalid subject request transition %s -> %s", current.Status, next.Status)
+		return conflictingLifecycleRequest("lifecycle.subject_request.transition_invalid", fmt.Errorf("invalid subject request transition %s -> %s", current.Status, next.Status))
 	}
 	return nil
 }
 
 func EvaluateEligibility(input lifecyclemodel.EligibilityInput) (lifecyclemodel.EligibilityDecision, error) {
 	if input.Operation != lifecyclemodel.OperationArchive && input.Operation != lifecyclemodel.OperationPurge && input.Operation != lifecyclemodel.OperationErase {
-		return lifecyclemodel.EligibilityDecision{}, fmt.Errorf("unsupported lifecycle operation %q", input.Operation)
+		return lifecyclemodel.EligibilityDecision{}, invalidLifecycleRequest(fmt.Errorf("unsupported lifecycle operation %q", input.Operation))
 	}
 	if strings.TrimSpace(input.Target.WorkspaceID) == "" || strings.TrimSpace(input.Target.Owner) == "" || strings.TrimSpace(input.Target.ResourceType) == "" || strings.TrimSpace(input.Target.ResourceID) == "" {
-		return lifecyclemodel.EligibilityDecision{}, fmt.Errorf("workspace, owner, resource type, and resource id are required")
+		return lifecyclemodel.EligibilityDecision{}, invalidLifecycleRequest(fmt.Errorf("workspace, owner, resource type, and resource id are required"))
 	}
 	if input.Now.IsZero() {
-		return lifecyclemodel.EligibilityDecision{}, fmt.Errorf("decision time is required")
+		return lifecyclemodel.EligibilityDecision{}, invalidLifecycleRequest(fmt.Errorf("decision time is required"))
 	}
 	blockers := make([]string, 0, 6)
 	if !input.OwnerEligible {
@@ -189,13 +189,13 @@ func EvaluateEligibility(input lifecyclemodel.EligibilityInput) (lifecyclemodel.
 
 func ValidateLegalHold(hold lifecyclemodel.LegalHold) error {
 	if strings.TrimSpace(hold.ID) == "" || strings.TrimSpace(hold.WorkspaceID) == "" || strings.TrimSpace(hold.Reason) == "" || strings.TrimSpace(hold.Authority) == "" || strings.TrimSpace(hold.AuditEvidence) == "" {
-		return fmt.Errorf("legal hold id, workspace, reason, authority, and audit evidence are required")
+		return invalidLifecycleRequest(fmt.Errorf("legal hold id, workspace, reason, authority, and audit evidence are required"))
 	}
 	if hold.StartsAt.IsZero() || hold.ReviewAt.IsZero() {
-		return fmt.Errorf("legal hold start and review times are required")
+		return invalidLifecycleRequest(fmt.Errorf("legal hold start and review times are required"))
 	}
 	if hold.EndsAt != nil && !hold.EndsAt.After(hold.StartsAt) {
-		return fmt.Errorf("legal hold end must be after start")
+		return invalidLifecycleRequest(fmt.Errorf("legal hold end must be after start"))
 	}
 	return nil
 }

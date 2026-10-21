@@ -34,7 +34,7 @@ func NewWorkerRunner(service *LifecycleApplicationService) *WorkerRunner {
 
 func (r *WorkerRunner) Tick(ctx context.Context, tick WorkerTick) (WorkerTickResult, error) {
 	if r == nil || r.service == nil {
-		return WorkerTickResult{}, fmt.Errorf("lifecycle worker service unavailable")
+		return WorkerTickResult{}, lifecycleUnavailable(fmt.Errorf("lifecycle worker service unavailable"))
 	}
 	processed, err := r.service.ProcessRunnableCleanupJobs(ctx, tick.LeaseOwner, tick.BatchSize, tick.JobLimit, tick.Now, tick.Scope)
 	deleted, cleanupErr := r.service.CleanupExpiredSubjectArtifacts(ctx, tick.Now, tick.Scope)
