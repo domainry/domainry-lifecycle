@@ -10,6 +10,7 @@ import (
 	"time"
 
 	sharedartifact "github.com/domainry/domainry-foundation/artifact"
+	"github.com/domainry/domainry-foundation/entityid"
 	lifecyclecontract "github.com/domainry/domainry-lifecycle-sdk/contract"
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
 	lifecyclemodel "github.com/domainry/domainry-lifecycle/internal/domain/lifecycle/model"
@@ -47,14 +48,14 @@ func (w ArchiveWriter) Archived(ctx context.Context, workspaceID, source, resour
 	if w.artifacts == nil {
 		return false, fmt.Errorf("lifecycle shared Artifact store unavailable")
 	}
-	value, found, err := w.artifacts.ByID(lifecycleArtifactContext(ctx), workspaceID, archiveArtifactID(workspaceID, source, resourceID, policyKey))
+	value, found, err := w.artifacts.ByIdempotency(lifecycleArtifactContext(ctx), workspaceID, sharedartifact.OwnerLifecycle, "archive", archiveArtifactID(workspaceID, source, resourceID, policyKey))
 	if err != nil || !found {
 		return false, err
 	}
 	if value.Owner != sharedartifact.OwnerLifecycle || value.Kind != "archive" || value.Status != sharedartifact.StatusAvailable {
 		return false, nil
 	}
-	bindings, err := w.artifacts.Bindings(lifecycleArtifactContext(ctx), workspaceID, value.ID)
+	bindings, err := w.artifacts.Bindings(lifecycleArtifactContext(ctx), workspaceID, value.ArtifactID)
 	if err != nil {
 		return false, err
 	}
@@ -70,7 +71,7 @@ func (w ArchiveWriter) ArchivePayload(ctx context.Context, owner string, job lif
 	if w.artifacts == nil || w.content == nil || w.cleanup == nil {
 		return false, fmt.Errorf("lifecycle shared Artifact store or content writer unavailable")
 	}
-	artifactID := archiveArtifactID(job.WorkspaceID, source, resourceID, policy.Policy.Key)
+	idempotencyKey := archiveArtifactID(job.WorkspaceID, source, resourceID, policy.Policy.Key)
 	if existing, err := w.Archived(ctx, job.WorkspaceID, source, resourceID, policy.Policy.Key); err != nil || existing {
 		return false, err
 	}
@@ -78,7 +79,7 @@ func (w ArchiveWriter) ArchivePayload(ctx context.Context, owner string, job lif
 	if archivedAt.IsZero() {
 		archivedAt = time.Now().UTC()
 	}
-	content, err := w.content.PutImmutable(ctx, job.WorkspaceID, artifactID, payload)
+	content, err := w.content.PutImmutable(ctx, job.WorkspaceID, idempotencyKey, payload)
 	if err != nil {
 		return false, err
 	}
@@ -86,7 +87,7 @@ func (w ArchiveWriter) ArchivePayload(ctx context.Context, owner string, job lif
 		if err == nil {
 			return
 		}
-		current, found, readErr := w.artifacts.ByID(context.WithoutCancel(ctx), job.WorkspaceID, artifactID)
+		current, found, readErr := w.artifacts.ByIdempotency(context.WithoutCancel(ctx), job.WorkspaceID, sharedartifact.OwnerLifecycle, "archive", idempotencyKey)
 		if readErr == nil && (!found || current.StorageReference != content.Reference) {
 			_ = w.cleanup.Delete(context.WithoutCancel(ctx), job.WorkspaceID, content.Reference)
 		}
@@ -97,7 +98,7 @@ func (w ArchiveWriter) ArchivePayload(ctx context.Context, owner string, job lif
 	}
 	metadata, err := json.Marshal(archiveArtifactMetadata{
 		Owner: strings.TrimSpace(owner), SourceTable: strings.TrimSpace(source), ResourceID: strings.TrimSpace(resourceID),
-		PolicyKey: policy.Policy.Key, PolicyVersion: policy.Policy.Version, JobID: job.ID,
+		PolicyKey: policy.Policy.Key, PolicyVersion: policy.Policy.Version, JobID: job.JobID,
 	})
 	if err != nil {
 		return false, err
@@ -106,8 +107,12 @@ func (w ArchiveWriter) ArchivePayload(ctx context.Context, owner string, job lif
 	if createdBy == "" {
 		createdBy = "lifecycle_cleanup"
 	}
+	artifactID, err := entityid.New("art")
+	if err != nil {
+		return false, err
+	}
 	value := sharedartifact.Artifact{
-		ID: artifactID, WorkspaceID: job.WorkspaceID, Owner: sharedartifact.OwnerLifecycle, Kind: "archive", IdempotencyKey: artifactID,
+		ArtifactID: artifactID, WorkspaceID: job.WorkspaceID, Owner: sharedartifact.OwnerLifecycle, Kind: "archive", IdempotencyKey: idempotencyKey,
 		CreatedBy: createdBy, OwnerOrgID: strings.TrimSpace(job.OwnerOrgID), Filename: artifactID + ".json", MediaType: "application/json",
 		ContentSHA256: content.SHA256, SizeBytes: content.Size, StorageReference: content.Reference,
 		Status: sharedartifact.StatusAvailable, ScanStatus: sharedartifact.ScanNotRequired, Metadata: metadata, CreatedAt: archivedAt, UpdatedAt: archivedAt,
@@ -118,15 +123,15 @@ func (w ArchiveWriter) ArchivePayload(ctx context.Context, owner string, job lif
 		return false, fmt.Errorf("register Lifecycle archive Artifact: %w", err)
 	}
 	binding := sharedartifact.Binding{
-		ID: artifactID + ":job", WorkspaceID: job.WorkspaceID, ArtifactID: artifactID, Owner: sharedartifact.OwnerLifecycle,
-		Kind: sharedartifact.BindingJob, ResourceType: "lifecycle.cleanup_job", ResourceID: job.ID, Metadata: json.RawMessage(`{}`), CreatedAt: archivedAt,
+		WorkspaceID: job.WorkspaceID, ArtifactID: artifactID, Owner: sharedartifact.OwnerLifecycle,
+		Kind: sharedartifact.BindingJob, ResourceType: "lifecycle.cleanup_job", ResourceID: job.JobID, Metadata: json.RawMessage(`{}`), CreatedAt: archivedAt,
 	}
 	_, jobBindingCreated, err := w.artifacts.Bind(artifactCtx, binding)
 	if err != nil {
 		return false, fmt.Errorf("bind Lifecycle archive Artifact: %w", err)
 	}
 	sourceBinding := sharedartifact.Binding{
-		ID: artifactID + ":source", WorkspaceID: job.WorkspaceID, ArtifactID: artifactID, Owner: sharedartifact.OwnerLifecycle,
+		WorkspaceID: job.WorkspaceID, ArtifactID: artifactID, Owner: sharedartifact.OwnerLifecycle,
 		Kind: sharedartifact.BindingObjectField, ResourceType: strings.TrimSpace(source), ResourceID: strings.TrimSpace(resourceID),
 		FieldKey: policy.Policy.Key, Metadata: json.RawMessage(`{}`), CreatedAt: archivedAt,
 	}

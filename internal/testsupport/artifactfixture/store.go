@@ -19,6 +19,7 @@ import (
 // tests. Runtime coverage exercises the real SQL adapter.
 type Store struct {
 	mu       sync.Mutex
+	nextID   int64
 	values   map[string]sharedartifact.Artifact
 	bindings map[string]sharedartifact.Binding
 }
@@ -34,7 +35,7 @@ func artifactKey(workspaceID, id string) string {
 func (s *Store) Register(_ context.Context, value sharedartifact.Artifact) (sharedartifact.Artifact, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := artifactKey(value.WorkspaceID, value.ID)
+	key := artifactKey(value.WorkspaceID, value.ArtifactID)
 	if existing, found := s.values[key]; found {
 		if sameRegistration(existing, value) {
 			return cloneArtifact(existing), false, nil
@@ -49,8 +50,21 @@ func (s *Store) Register(_ context.Context, value sharedartifact.Artifact) (shar
 			return sharedartifact.Artifact{}, false, sharedartifact.ErrIdentityConflict
 		}
 	}
+	s.nextID++
+	value.ID = s.nextID
 	s.values[key] = cloneArtifact(value)
 	return cloneArtifact(value), true, nil
+}
+
+func (s *Store) ByIdempotency(_ context.Context, workspaceID, owner, kind, idempotencyKey string) (sharedartifact.Artifact, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, value := range s.values {
+		if value.WorkspaceID == workspaceID && value.Owner == owner && value.Kind == kind && value.IdempotencyKey == idempotencyKey {
+			return cloneArtifact(value), true, nil
+		}
+	}
+	return sharedartifact.Artifact{}, false, nil
 }
 
 func (s *Store) ByID(_ context.Context, workspaceID, id string) (sharedartifact.Artifact, bool, error) {
@@ -90,7 +104,7 @@ func (s *Store) Bind(_ context.Context, value sharedartifact.Binding) (sharedart
 	if _, found := s.values[artifactKey(value.WorkspaceID, value.ArtifactID)]; !found {
 		return sharedartifact.Binding{}, false, sharedartifact.ErrBindingConflict
 	}
-	key := artifactKey(value.WorkspaceID, value.ID)
+	key := bindingKey(value)
 	if existing, found := s.bindings[key]; found {
 		if sameBinding(existing, value) {
 			return cloneBinding(existing), false, nil
@@ -112,7 +126,7 @@ func (s *Store) Bindings(_ context.Context, workspaceID, artifactID string) ([]s
 	}
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].CreatedAt.Equal(result[j].CreatedAt) {
-			return result[i].ID < result[j].ID
+			return bindingKey(result[i]) < bindingKey(result[j])
 		}
 		return result[i].CreatedAt.Before(result[j].CreatedAt)
 	})
@@ -169,7 +183,7 @@ func (s *Store) List(_ context.Context, workspaceID string, query sharedartifact
 
 func (s *Store) hasBinding(artifact sharedartifact.Artifact, query sharedartifact.BindingQuery) bool {
 	for _, value := range s.bindings {
-		if value.WorkspaceID != artifact.WorkspaceID || value.ArtifactID != artifact.ID {
+		if value.WorkspaceID != artifact.WorkspaceID || value.ArtifactID != artifact.ArtifactID {
 			continue
 		}
 		if query.Owner != "" && value.Owner != query.Owner || query.Kind != "" && value.Kind != query.Kind ||
@@ -185,7 +199,7 @@ func (s *Store) hasBinding(artifact sharedartifact.Artifact, query sharedartifac
 func (s *Store) Update(_ context.Context, mutation sharedartifact.Mutation) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := artifactKey(mutation.WorkspaceID, mutation.ID)
+	key := artifactKey(mutation.WorkspaceID, mutation.ArtifactID)
 	value, found := s.values[key]
 	if !found || value.Owner != mutation.Owner || value.Kind != mutation.Kind || value.Status != mutation.ExpectedStatus || value.ScanStatus != mutation.ExpectedScanStatus {
 		return false, nil
@@ -231,14 +245,18 @@ func containsString(values []string, value string) bool {
 }
 
 func sameRegistration(left, right sharedartifact.Artifact) bool {
-	return left.WorkspaceID == right.WorkspaceID && left.ID == right.ID && left.Owner == right.Owner && left.Kind == right.Kind &&
+	return left.WorkspaceID == right.WorkspaceID && left.ArtifactID == right.ArtifactID && left.Owner == right.Owner && left.Kind == right.Kind &&
 		left.IdempotencyKey == right.IdempotencyKey && left.Filename == right.Filename && left.MediaType == right.MediaType &&
 		left.ContentSHA256 == right.ContentSHA256 && left.SizeBytes == right.SizeBytes && left.StorageReference == right.StorageReference
 }
 
 func sameBinding(left, right sharedartifact.Binding) bool {
-	return left.WorkspaceID == right.WorkspaceID && left.ID == right.ID && left.ArtifactID == right.ArtifactID && left.Owner == right.Owner &&
+	return left.WorkspaceID == right.WorkspaceID && left.ArtifactID == right.ArtifactID && left.Owner == right.Owner &&
 		left.Kind == right.Kind && left.ResourceType == right.ResourceType && left.ResourceID == right.ResourceID && left.FieldKey == right.FieldKey
+}
+
+func bindingKey(value sharedartifact.Binding) string {
+	return strings.Join([]string{value.WorkspaceID, value.ArtifactID, value.Owner, value.Kind, value.ResourceType, value.ResourceID, value.FieldKey}, "\x00")
 }
 
 func cloneArtifact(value sharedartifact.Artifact) sharedartifact.Artifact {

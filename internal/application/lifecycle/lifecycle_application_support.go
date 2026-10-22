@@ -47,7 +47,7 @@ func subjectExecutionStepKey(owner, operation string) string {
 
 func (s *LifecycleApplicationService) saveSubjectExecutionStep(ctx context.Context, request lifecyclemodel.SubjectRequest, owner, operation string, payload json.RawMessage, completedAt time.Time) error {
 	return s.subjectRequests.SaveSubjectExecutionStep(ctx, lifecyclemodel.SubjectExecutionStep{
-		WorkspaceID: request.WorkspaceID, RequestID: request.ID, Owner: strings.TrimSpace(owner),
+		WorkspaceID: request.WorkspaceID, RequestID: request.RequestID, Owner: strings.TrimSpace(owner),
 		Operation: strings.TrimSpace(operation), Payload: append(json.RawMessage(nil), payload...), CompletedAt: completedAt,
 	})
 }
@@ -58,7 +58,7 @@ func (s *LifecycleApplicationService) transitionSubject(ctx context.Context, cur
 
 func (s *LifecycleApplicationService) transitionSubjectWith(ctx context.Context, current, next lifecyclemodel.SubjectRequest, actor, event string, filter lifecyclepersistence.DataScopeFilter, before func(context.Context) error) (lifecyclemodel.SubjectRequest, error) {
 	err := s.withinTransaction(ctx, func(transactionContext context.Context) error {
-		persisted, found, err := s.subjectRequests.GetSubjectRequest(transactionContext, next.WorkspaceID, next.ID, filter)
+		persisted, found, err := s.subjectRequests.GetSubjectRequest(transactionContext, next.WorkspaceID, next.RequestID, filter)
 		if err != nil {
 			return err
 		}
@@ -76,7 +76,7 @@ func (s *LifecycleApplicationService) transitionSubjectWith(ctx context.Context,
 		if err := s.subjectRequests.TransitionSubjectRequest(transactionContext, persisted, next, filter); err != nil {
 			return err
 		}
-		return s.audit(transactionContext, next.WorkspaceID, event, actor, next.ID, "", next)
+		return s.audit(transactionContext, next.WorkspaceID, event, actor, next.RequestID, "", next)
 	})
 	return next, err
 }
@@ -127,11 +127,11 @@ func lifecycleAuditOperationID(ctx context.Context, payload any) string {
 func lifecycleAuditOwnerRunID(payload any) string {
 	switch value := payload.(type) {
 	case lifecyclemodel.CleanupJob:
-		return strings.TrimSpace(value.ID)
+		return strings.TrimSpace(value.JobID)
 	case lifecyclemodel.SubjectRequest:
-		return strings.TrimSpace(value.ID)
+		return strings.TrimSpace(value.RequestID)
 	case lifecyclemodel.ExternalErasure:
-		return strings.TrimSpace(value.ID)
+		return strings.TrimSpace(value.RequestID)
 	case lifecyclemodel.DeletionRegistration:
 		return strings.TrimSpace(value.RequestID)
 	case lifecyclecontract.AccountErasureApproval:

@@ -37,9 +37,10 @@ func TestRetentionPolicyAndPublicationGovernance(t *testing.T) {
 func TestEligibilityAndLegalHoldStayWorkspaceScoped(t *testing.T) {
 	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
 	target := lifecyclemodel.ResourceTarget{WorkspaceID: "workspace-a", Owner: "record", ResourceType: "customer", ResourceID: "customer-1"}
-	hold := lifecyclemodel.LegalHold{ID: "hold-1", WorkspaceID: "workspace-a", Owner: "record", ResourceType: "customer", ResourceID: "customer-1", Reason: "litigation", Authority: "legal", StartsAt: now.Add(-time.Hour), ReviewAt: now.Add(time.Hour), AuditEvidence: "evidence-1"}
+	holdID := "hold_00000000000000000000000000000001"
+	hold := lifecyclemodel.LegalHold{HoldID: holdID, WorkspaceID: "workspace-a", Owner: "record", ResourceType: "customer", ResourceID: "customer-1", Reason: "litigation", Authority: "legal", StartsAt: now.Add(-time.Hour), ReviewAt: now.Add(time.Hour), AuditEvidence: "evidence-1"}
 	decision, err := EvaluateEligibility(lifecyclemodel.EligibilityInput{Operation: lifecyclemodel.OperationPurge, Target: target, OwnerEligible: true, LegalHolds: []lifecyclemodel.LegalHold{hold}, Now: now})
-	if err != nil || decision.Eligible || len(decision.Blockers) != 1 || decision.Blockers[0] != "legal_hold:hold-1" {
+	if err != nil || decision.Eligible || len(decision.Blockers) != 1 || decision.Blockers[0] != "legal_hold:"+holdID {
 		t.Fatalf("decision=%#v err=%v", decision, err)
 	}
 	target.WorkspaceID = "workspace-b"
@@ -51,7 +52,7 @@ func TestEligibilityAndLegalHoldStayWorkspaceScoped(t *testing.T) {
 
 func TestSubjectTransitionRequiresIndependentApprovalAndExecutionEvidence(t *testing.T) {
 	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
-	current := lifecyclemodel.SubjectRequest{ID: "request-1", WorkspaceID: "workspace-a", Kind: lifecyclemodel.SubjectRequestExport, Status: lifecyclemodel.SubjectRequestPendingVerification, RequestedBy: "requester", UpdatedAt: now}
+	current := lifecyclemodel.SubjectRequest{RequestID: "subreq_00000000000000000000000000000001", WorkspaceID: "workspace-a", Kind: lifecyclemodel.SubjectRequestExport, Status: lifecyclemodel.SubjectRequestPendingVerification, RequestedBy: "requester", UpdatedAt: now}
 	verified := current
 	verified.Status, verified.ResolvedIdentity, verified.VerifiedBy, verified.SecondFactorRef, verified.UpdatedAt = lifecyclemodel.SubjectRequestVerified, "identity-1", "verifier", "mfa-1", now.Add(time.Minute)
 	if err := TransitionSubjectRequest(current, verified); err != nil {

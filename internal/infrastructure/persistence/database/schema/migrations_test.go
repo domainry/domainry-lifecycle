@@ -91,7 +91,9 @@ func TestSchemaOwnershipMatchesCanonicalSQLiteDDL(t *testing.T) {
 			quoted[index] = `"` + column + `"`
 		}
 		if primaryKey := "PRIMARY KEY (" + strings.Join(quoted, ", ") + ")"; !strings.Contains(create, primaryKey) {
-			t.Fatalf("Lifecycle table %s ownership primary key %v does not match DDL: %s", table.Name, table.PrimaryKey, create)
+			if !(len(table.PrimaryKey) == 1 && table.PrimaryKey[0] == "id" && strings.Contains(create, `"id" INTEGER PRIMARY KEY AUTOINCREMENT`)) {
+				t.Fatalf("Lifecycle table %s ownership primary key %v does not match DDL: %s", table.Name, table.PrimaryKey, create)
+			}
 		}
 	}
 	joined := strings.Join(migrations[0].Statements, "\n")

@@ -30,7 +30,7 @@ func TestUploadCleanupTransitionsTerminalBeforeDeleteAndRetries(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err = store.RegisterUpload(t.Context(), lifecyclecontract.UploadArtifact{
-		ID: "upload-a", WorkspaceID: "workspace-a", ObjectKey: "document", FieldKey: "file",
+		ArtifactID: "upload-a", WorkspaceID: "workspace-a", ObjectKey: "document", FieldKey: "file",
 		Filename: info.Reference, ContentType: "application/octet-stream", SHA256: info.SHA256, Size: info.Size, CreatedAt: createdAt,
 	}); err != nil {
 		t.Fatal(err)
@@ -75,7 +75,7 @@ func TestSubjectFileErasureCommitsTerminalArtifactBeforeBlobDelete(t *testing.T)
 		t.Fatal(err)
 	}
 	if err = register.RegisterUpload(t.Context(), lifecyclecontract.UploadArtifact{
-		ID: "subject-upload", WorkspaceID: "workspace-a", ObjectKey: "document", FieldKey: "file",
+		ArtifactID: "subject-upload", WorkspaceID: "workspace-a", ObjectKey: "document", FieldKey: "file",
 		Filename: info.Reference, ContentType: "application/pdf", SHA256: info.SHA256, Size: info.Size, CreatedAt: createdAt,
 	}); err != nil {
 		t.Fatal(err)
@@ -115,7 +115,7 @@ func TestLifecycleArchiveRegistrationFailureDeletesUnreferencedBlob(t *testing.T
 	registerErr := errors.New("archive registration failed")
 	host := subjectArtifactCleanupHost{artifacts: &failingLifecycleArtifactStore{ManagedStore: base, err: registerErr}, content: content}
 	writer := NewArchiveWriter(host)
-	job := lifecyclemodel.CleanupJob{ID: "job-a", WorkspaceID: "workspace-a", RequestedBy: "operator-a", UpdatedAt: time.Date(2026, 9, 23, 17, 0, 0, 0, time.UTC)}
+	job := lifecyclemodel.CleanupJob{JobID: "job-a", WorkspaceID: "workspace-a", RequestedBy: "operator-a", UpdatedAt: time.Date(2026, 9, 23, 17, 0, 0, 0, time.UTC)}
 	policy := lifecyclemodel.PolicyVersion{Policy: lifecyclemodel.RetentionPolicy{Key: "records", Version: "1"}}
 	if _, err := writer.ArchivePayload(t.Context(), "record", job, policy, "records", "record-a", []byte(`{"id":"record-a"}`)); !errors.Is(err, registerErr) {
 		t.Fatalf("archive err=%v", err)

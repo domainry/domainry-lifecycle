@@ -14,7 +14,7 @@ type cleanupInspectionRepository struct {
 }
 
 func (r *cleanupInspectionRepository) SaveCleanupJob(_ context.Context, job lifecyclemodel.CleanupJob) error {
-	r.jobs[job.WorkspaceID+":"+job.ID] = job
+	r.jobs[job.WorkspaceID+":"+job.JobID] = job
 	return nil
 }
 
@@ -37,7 +37,7 @@ func (*cleanupInspectionRepository) UpdateCleanupJob(context.Context, lifecyclem
 
 func TestInspectCleanupJobReadsCurrentOwnerStateWithoutMutation(t *testing.T) {
 	repository := &cleanupInspectionRepository{jobs: map[string]lifecyclemodel.CleanupJob{
-		"workspace-a:job-1": {ID: "job-1", WorkspaceID: "workspace-a", Status: lifecyclemodel.CleanupStatusRunning, Scanned: 10},
+		"workspace-a:job-1": {JobID: "job-1", WorkspaceID: "workspace-a", Status: lifecyclemodel.CleanupStatusRunning, Scanned: 10},
 	}}
 	service := &LifecycleApplicationService{cleanupJobs: repository}
 	system := lifecycleaccess.NewSystemPrincipal("runtime-lifecycle-http", lifecycleaccess.NewSystemScope(lifecycleaccess.SystemScopeGlobal, "inspect cleanup replay readiness"))

@@ -22,7 +22,7 @@ func (s *LifecycleApplicationService) ProcessRunnableCleanupJobs(ctx context.Con
 	}
 	processed := 0
 	for _, job := range jobs {
-		if _, err := s.ProcessCleanupJob(ctx, job.WorkspaceID, job.ID, leaseOwner, 2*time.Minute, batchSize, now, principal); err != nil {
+		if _, err := s.ProcessCleanupJob(ctx, job.WorkspaceID, job.JobID, leaseOwner, 2*time.Minute, batchSize, now, principal); err != nil {
 			return processed, err
 		}
 		processed++
@@ -81,7 +81,7 @@ func (s *LifecycleApplicationService) ReplayRegisteredDeletions(ctx context.Cont
 			if !json.Valid(plan) {
 				return replayed, lifecycleBadRequest(fmt.Errorf("invalid restore erasure plan"))
 			}
-			request := lifecyclemodel.SubjectRequest{WorkspaceID: workspaceID, ID: registration.RequestID}
+			request := lifecyclemodel.SubjectRequest{WorkspaceID: workspaceID, RequestID: registration.RequestID}
 			if err = s.saveSubjectExecutionStep(ctx, request, owner, "erase_plan", plan, time.Now().UTC()); err != nil {
 				return replayed, err
 			}
@@ -135,7 +135,7 @@ func (s *LifecycleApplicationService) CleanupExpiredSubjectArtifacts(ctx context
 		return deleted, err
 	}
 	for _, request := range expired {
-		if err := s.audit(ctx, request.WorkspaceID, "lifecycle.subject.export_expired", "lifecycle_cleanup", request.ID, "", map[string]any{"request_id": request.ID}); err != nil {
+		if err := s.audit(ctx, request.WorkspaceID, "lifecycle.subject.export_expired", "lifecycle_cleanup", request.RequestID, "", map[string]any{"request_id": request.RequestID}); err != nil {
 			return deleted, err
 		}
 	}

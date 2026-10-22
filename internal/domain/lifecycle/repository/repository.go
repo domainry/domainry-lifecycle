@@ -116,6 +116,7 @@ type SubjectErasureRepository interface {
 
 type AccountErasureRepository interface {
 	SaveAccountErasureApproval(context.Context, lifecyclecontract.AccountErasureApproval) error
+	GetAccountErasureRequest(context.Context, string, string) (lifecyclemodel.SubjectRequest, bool, error)
 	GetAccountErasureApproval(context.Context, string, string) (lifecyclecontract.AccountErasureApproval, bool, error)
 	ListRunnableAccountErasures(context.Context, int, time.Time, lifecycleaccess.SystemScope) ([]lifecyclemodel.SubjectRequest, error)
 }

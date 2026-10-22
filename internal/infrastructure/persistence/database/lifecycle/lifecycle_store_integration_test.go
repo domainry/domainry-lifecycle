@@ -31,8 +31,8 @@ func TestFileScanQueueSurvivesRestartAndTerminalEvidenceIsImmutable(t *testing.T
 	store := NewFileArtifactStore(repository.host, persistenceUploadFields{}, t.TempDir())
 	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
 	for _, artifact := range []lifecyclecontract.UploadArtifact{
-		{ID: "file-b", WorkspaceID: "workspace-b", ObjectKey: "document", FieldKey: "file", Filename: "b.png", ContentType: "image/png", SHA256: "bbb", Size: 20, CreatedAt: now.Add(time.Second)},
-		{ID: "file-a", WorkspaceID: "workspace-a", ObjectKey: "document", FieldKey: "file", Filename: "a.png", ContentType: "image/png", SHA256: "aaa", Size: 10, CreatedAt: now},
+		{ArtifactID: "file-b", WorkspaceID: "workspace-b", ObjectKey: "document", FieldKey: "file", Filename: "b.png", ContentType: "image/png", SHA256: "bbb", Size: 20, CreatedAt: now.Add(time.Second)},
+		{ArtifactID: "file-a", WorkspaceID: "workspace-a", ObjectKey: "document", FieldKey: "file", Filename: "a.png", ContentType: "image/png", SHA256: "aaa", Size: 10, CreatedAt: now},
 	} {
 		if err := store.RegisterUpload(t.Context(), artifact); err != nil {
 			t.Fatal(err)
@@ -40,7 +40,7 @@ func TestFileScanQueueSurvivesRestartAndTerminalEvidenceIsImmutable(t *testing.T
 	}
 	scope := lifecycleaccess.NewSystemScope(lifecycleaccess.SystemScopeGlobal, "scan pending uploads")
 	pending, err := store.PendingFileScans(t.Context(), scope, 25)
-	if err != nil || len(pending) != 2 || pending[0].FileID != "file-a" || pending[1].FileID != "file-b" {
+	if err != nil || len(pending) != 2 || pending[0].ArtifactID != "file-a" || pending[1].ArtifactID != "file-b" {
 		t.Fatalf("pending=%#v err=%v", pending, err)
 	}
 	clean := pending[0]
@@ -59,7 +59,7 @@ func TestFileScanQueueSurvivesRestartAndTerminalEvidenceIsImmutable(t *testing.T
 		t.Fatal("conflicting terminal scan evidence replaced the committed result")
 	}
 	pending, err = store.PendingFileScans(t.Context(), scope, 25)
-	if err != nil || len(pending) != 1 || pending[0].FileID != "file-b" {
+	if err != nil || len(pending) != 1 || pending[0].ArtifactID != "file-b" {
 		t.Fatalf("remaining pending=%#v err=%v", pending, err)
 	}
 }
@@ -68,11 +68,11 @@ func TestUploadRegistrationIsIdentityIdempotentAndNeverResetsTerminalScan(t *tes
 	repository, _ := newPersistenceTestStore(t)
 	store := NewFileArtifactStore(repository.host, persistenceUploadFields{}, t.TempDir())
 	now := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
-	artifact := lifecyclecontract.UploadArtifact{ID: "derived-1", WorkspaceID: "workspace-a", ObjectKey: "document", FieldKey: "file", Filename: "derived.pdf", ContentType: "application/pdf", SHA256: "aaa", Size: 10, CreatedAt: now}
+	artifact := lifecyclecontract.UploadArtifact{ArtifactID: "derived-1", WorkspaceID: "workspace-a", ObjectKey: "document", FieldKey: "file", Filename: "derived.pdf", ContentType: "application/pdf", SHA256: "aaa", Size: 10, CreatedAt: now}
 	if err := store.RegisterUpload(t.Context(), artifact); err != nil {
 		t.Fatal(err)
 	}
-	clean, err := store.FindFileScan(t.Context(), artifact.WorkspaceID, artifact.ID)
+	clean, err := store.FindFileScan(t.Context(), artifact.WorkspaceID, artifact.ArtifactID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestUploadRegistrationIsIdentityIdempotentAndNeverResetsTerminalScan(t *tes
 	if err := store.RegisterUpload(t.Context(), artifact); err != nil {
 		t.Fatalf("identical retry failed: %v", err)
 	}
-	after, err := store.FindFileScan(t.Context(), artifact.WorkspaceID, artifact.ID)
+	after, err := store.FindFileScan(t.Context(), artifact.WorkspaceID, artifact.ArtifactID)
 	if err != nil || after.Status != lifecyclecontract.FileScanClean || after.Provider != "derived-v1" || !after.ScannedAt.Equal(clean.ScannedAt) {
 		t.Fatalf("terminal evidence reset: after=%+v err=%v", after, err)
 	}
@@ -100,39 +100,39 @@ func TestLegalHoldsRemainActiveConstraintsAndCleanupJobsRetainFencedCursor(t *te
 	now := time.Date(2026, 9, 23, 9, 0, 0, 0, time.UTC)
 	endedAt := now.Add(-time.Minute)
 	for _, hold := range []lifecyclemodel.LegalHold{
-		{ID: "active-hold", WorkspaceID: "workspace-a", Owner: "record", ResourceType: "customer", ResourceID: "customer-1", StartsAt: now.Add(-time.Hour), ReviewAt: now.Add(time.Hour)},
-		{ID: "expired-hold", WorkspaceID: "workspace-a", Owner: "record", ResourceType: "customer", ResourceID: "customer-1", StartsAt: now.Add(-2 * time.Hour), EndsAt: &endedAt, ReviewAt: now},
-		{ID: "other-resource", WorkspaceID: "workspace-a", Owner: "record", ResourceType: "customer", ResourceID: "customer-2", StartsAt: now.Add(-time.Hour), ReviewAt: now.Add(time.Hour)},
+		{HoldID: "active-hold", WorkspaceID: "workspace-a", Owner: "record", ResourceType: "customer", ResourceID: "customer-1", StartsAt: now.Add(-time.Hour), ReviewAt: now.Add(time.Hour)},
+		{HoldID: "expired-hold", WorkspaceID: "workspace-a", Owner: "record", ResourceType: "customer", ResourceID: "customer-1", StartsAt: now.Add(-2 * time.Hour), EndsAt: &endedAt, ReviewAt: now},
+		{HoldID: "other-resource", WorkspaceID: "workspace-a", Owner: "record", ResourceType: "customer", ResourceID: "customer-2", StartsAt: now.Add(-time.Hour), ReviewAt: now.Add(time.Hour)},
 	} {
 		if err := repository.SaveLegalHold(t.Context(), hold); err != nil {
 			t.Fatal(err)
 		}
 	}
 	holds, err := repository.ActiveLegalHolds(t.Context(), lifecyclemodel.ResourceTarget{WorkspaceID: "workspace-a", Owner: "record", ResourceType: "customer", ResourceID: "customer-1"}, now)
-	if err != nil || len(holds) != 1 || holds[0].ID != "active-hold" {
+	if err != nil || len(holds) != 1 || holds[0].HoldID != "active-hold" {
 		t.Fatalf("active legal holds=%#v err=%v", holds, err)
 	}
 
 	job := lifecyclemodel.CleanupJob{
-		ID: "cleanup-1", WorkspaceID: "workspace-a", PolicyKey: "records", PolicyVersion: "1", Status: lifecyclemodel.CleanupStatusPending,
+		JobID: "cleanup-1", WorkspaceID: "workspace-a", PolicyKey: "records", PolicyVersion: "1", Status: lifecyclemodel.CleanupStatusPending,
 		RequestedBy: "operator", Checkpoint: "page-1", CreatedAt: now, UpdatedAt: now,
 	}
 	if err := repository.SaveCleanupJob(t.Context(), job); err != nil {
 		t.Fatal(err)
 	}
 	runnable, err := repository.ListRunnableCleanupJobs(t.Context(), lifecycleaccess.NewSystemScope(lifecycleaccess.SystemScopeGlobal, "test cleanup queue"), 10, now)
-	if err != nil || len(runnable) != 1 || runnable[0].ID != job.ID {
+	if err != nil || len(runnable) != 1 || runnable[0].JobID != job.JobID {
 		t.Fatalf("runnable cleanup jobs=%#v err=%v", runnable, err)
 	}
 	claimContext := requestcontext.WithOwnerExecutionID(t.Context(), "operation-cleanup")
-	first, acquired, err := repository.ClaimCleanupJob(claimContext, job.WorkspaceID, job.ID, "worker-a", time.Minute, now)
+	first, acquired, err := repository.ClaimCleanupJob(claimContext, job.WorkspaceID, job.JobID, "worker-a", time.Minute, now)
 	if err != nil || !acquired || first.OperationID != "operation-cleanup" || first.FencingToken != 1 || first.LeaseOwner != "worker-a" || first.Checkpoint != "page-1" {
 		t.Fatalf("first claim=%#v acquired=%v err=%v", first, acquired, err)
 	}
-	if _, acquired, err := repository.ClaimCleanupJob(t.Context(), job.WorkspaceID, job.ID, "worker-b", time.Minute, now.Add(30*time.Second)); err != nil || acquired {
+	if _, acquired, err := repository.ClaimCleanupJob(t.Context(), job.WorkspaceID, job.JobID, "worker-b", time.Minute, now.Add(30*time.Second)); err != nil || acquired {
 		t.Fatalf("concurrent claim acquired=%v err=%v", acquired, err)
 	}
-	second, acquired, err := repository.ClaimCleanupJob(t.Context(), job.WorkspaceID, job.ID, "worker-b", time.Minute, now.Add(2*time.Minute))
+	second, acquired, err := repository.ClaimCleanupJob(t.Context(), job.WorkspaceID, job.JobID, "worker-b", time.Minute, now.Add(2*time.Minute))
 	if err != nil || !acquired || second.FencingToken != 2 || second.LeaseOwner != "worker-b" {
 		t.Fatalf("reclaimed job=%#v acquired=%v err=%v", second, acquired, err)
 	}
@@ -144,7 +144,7 @@ func TestLegalHoldsRemainActiveConstraintsAndCleanupJobsRetainFencedCursor(t *te
 	if err := repository.UpdateCleanupJob(t.Context(), second); err != nil {
 		t.Fatal(err)
 	}
-	persisted, found, err := repository.GetCleanupJob(t.Context(), job.WorkspaceID, job.ID)
+	persisted, found, err := repository.GetCleanupJob(t.Context(), job.WorkspaceID, job.JobID)
 	if err != nil || !found || persisted.OperationID != "operation-cleanup" || persisted.Checkpoint != "page-2" || persisted.FencingToken != 2 || persisted.Status != lifecyclemodel.CleanupStatusPending {
 		t.Fatalf("persisted cleanup job=%#v found=%v err=%v", persisted, found, err)
 	}
@@ -284,8 +284,8 @@ func TestLifecycleStorePushesScopeIntoBusinessAndRelatedResourceQueries(t *testi
 		t.Fatalf("all policies=%#v err=%v", policies, err)
 	}
 
-	holdA := lifecyclemodel.LegalHold{ID: "hold-a", WorkspaceID: "workspace-a", CreatedBy: "user-a", OwnerOrgID: "org-a", StartsAt: now.Add(-time.Hour), ReviewAt: now.Add(time.Hour)}
-	holdB := lifecyclemodel.LegalHold{ID: "hold-b", WorkspaceID: "workspace-a", CreatedBy: "user-b", OwnerOrgID: "org-b", StartsAt: now.Add(-time.Hour), ReviewAt: now.Add(time.Hour)}
+	holdA := lifecyclemodel.LegalHold{HoldID: "hold-a", WorkspaceID: "workspace-a", CreatedBy: "user-a", OwnerOrgID: "org-a", StartsAt: now.Add(-time.Hour), ReviewAt: now.Add(time.Hour)}
+	holdB := lifecyclemodel.LegalHold{HoldID: "hold-b", WorkspaceID: "workspace-a", CreatedBy: "user-b", OwnerOrgID: "org-b", StartsAt: now.Add(-time.Hour), ReviewAt: now.Add(time.Hour)}
 	if err := repository.SaveLegalHold(t.Context(), holdA); err != nil {
 		t.Fatal(err)
 	}
@@ -293,11 +293,11 @@ func TestLifecycleStorePushesScopeIntoBusinessAndRelatedResourceQueries(t *testi
 		t.Fatal(err)
 	}
 	holds, err := repository.ListLegalHolds(t.Context(), "workspace-a", 100, ownerA)
-	if err != nil || len(holds) != 1 || holds[0].ID != "hold-a" {
+	if err != nil || len(holds) != 1 || holds[0].HoldID != "hold-a" {
 		t.Fatalf("owner legal holds=%#v err=%v", holds, err)
 	}
 	holds, err = repository.ListLegalHolds(t.Context(), "workspace-a", 1, all)
-	if err != nil || len(holds) != 1 || holds[0].ID != "hold-b" {
+	if err != nil || len(holds) != 1 || holds[0].HoldID != "hold-b" {
 		t.Fatalf("limited legal holds=%#v err=%v", holds, err)
 	}
 	unauthorized := holdB
@@ -312,8 +312,8 @@ func TestLifecycleStorePushesScopeIntoBusinessAndRelatedResourceQueries(t *testi
 	}
 
 	requests := []lifecyclemodel.SubjectRequest{
-		{ID: "request-a", WorkspaceID: "workspace-a", Kind: lifecyclemodel.SubjectRequestErase, Status: lifecyclemodel.SubjectRequestPendingVerification, SubjectID: "subject-a", RequestedBy: "user-a", OwnerOrgID: "org-a", CreatedAt: now, UpdatedAt: now},
-		{ID: "request-b", WorkspaceID: "workspace-a", Kind: lifecyclemodel.SubjectRequestErase, Status: lifecyclemodel.SubjectRequestPendingVerification, SubjectID: "subject-b", RequestedBy: "user-b", OwnerOrgID: "org-b", CreatedAt: now, UpdatedAt: now},
+		{RequestID: "request-a", WorkspaceID: "workspace-a", Kind: lifecyclemodel.SubjectRequestErase, Status: lifecyclemodel.SubjectRequestPendingVerification, SubjectID: "subject-a", RequestedBy: "user-a", OwnerOrgID: "org-a", CreatedAt: now, UpdatedAt: now},
+		{RequestID: "request-b", WorkspaceID: "workspace-a", Kind: lifecyclemodel.SubjectRequestErase, Status: lifecyclemodel.SubjectRequestPendingVerification, SubjectID: "subject-b", RequestedBy: "user-b", OwnerOrgID: "org-b", CreatedAt: now, UpdatedAt: now},
 	}
 	for _, request := range requests {
 		if err := repository.SaveSubjectRequest(t.Context(), request); err != nil {
@@ -332,15 +332,15 @@ func TestLifecycleStorePushesScopeIntoBusinessAndRelatedResourceQueries(t *testi
 		t.Fatalf("cross-owner transition changed request=%#v found=%t err=%v", loadedRequest, found, err)
 	}
 	for _, item := range []lifecyclemodel.ExternalErasure{
-		{ID: "external-a", RequestID: "request-a", WorkspaceID: "workspace-a", Status: "pending"},
-		{ID: "external-b", RequestID: "request-b", WorkspaceID: "workspace-a", Status: "pending"},
+		{RequestID: "external-a", ParentRequestID: "request-a", WorkspaceID: "workspace-a", Status: "pending"},
+		{RequestID: "external-b", ParentRequestID: "request-b", WorkspaceID: "workspace-a", Status: "pending"},
 	} {
 		if err := repository.SaveExternalErasures(t.Context(), []lifecyclemodel.ExternalErasure{item}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	external, err := repository.ListExternalErasures(t.Context(), "workspace-a", "", ownerA)
-	if err != nil || len(external) != 1 || external[0].ID != "external-a" {
+	if err != nil || len(external) != 1 || external[0].RequestID != "external-a" {
 		t.Fatalf("scoped external erasures=%#v err=%v", external, err)
 	}
 	if _, found, err := repository.ReconcileExternalErasure(t.Context(), "workspace-a", "external-b", "evidence", now, ownerA); err != nil || found {
@@ -352,7 +352,7 @@ func TestLifecycleStorePushesScopeIntoBusinessAndRelatedResourceQueries(t *testi
 		request.Status = lifecyclemodel.SubjectRequestSucceeded
 		request.ResolvedIdentity = []string{"identity-a", "identity-b"}[index]
 		request.BackupPending = true
-		request.ResultReference = "erase-evidence:" + request.ID
+		request.ResultReference = "erase-evidence:" + request.RequestID
 		request.UpdatedAt = now.Add(time.Minute)
 		if err := repository.SaveSubjectRequest(t.Context(), request); err != nil {
 			t.Fatal(err)
@@ -364,8 +364,8 @@ func TestLifecycleStorePushesScopeIntoBusinessAndRelatedResourceQueries(t *testi
 	}
 
 	for _, job := range []lifecyclemodel.CleanupJob{
-		{ID: "job-a", WorkspaceID: "workspace-a", PolicyKey: "policy-a", PolicyVersion: "1", Status: lifecyclemodel.CleanupStatusFailed, Purged: 7, RequestedBy: "user-a", OwnerOrgID: "org-a", CreatedAt: now, UpdatedAt: now},
-		{ID: "job-b", WorkspaceID: "workspace-a", PolicyKey: "policy-b", PolicyVersion: "1", Status: lifecyclemodel.CleanupStatusFailed, Purged: 99, RequestedBy: "user-b", OwnerOrgID: "org-b", CreatedAt: now, UpdatedAt: now},
+		{JobID: "job-a", WorkspaceID: "workspace-a", PolicyKey: "policy-a", PolicyVersion: "1", Status: lifecyclemodel.CleanupStatusFailed, Purged: 7, RequestedBy: "user-a", OwnerOrgID: "org-a", CreatedAt: now, UpdatedAt: now},
+		{JobID: "job-b", WorkspaceID: "workspace-a", PolicyKey: "policy-b", PolicyVersion: "1", Status: lifecyclemodel.CleanupStatusFailed, Purged: 99, RequestedBy: "user-b", OwnerOrgID: "org-b", CreatedAt: now, UpdatedAt: now},
 	} {
 		if err := repository.SaveCleanupJob(t.Context(), job); err != nil {
 			t.Fatal(err)

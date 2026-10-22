@@ -20,7 +20,7 @@ const (
 )
 
 func subjectErasureRequestIDs(renderer modulehost.Dialect, workspaceID, subjectID string) *query.SelectBuilder {
-	return query.NewWorkspaceSelectBuilder(renderer, subjectRequestsTable, workspaceID).Columns("id").Where(query.And(
+	return query.NewWorkspaceSelectBuilder(renderer, subjectRequestsTable, workspaceID).Columns("request_id").Where(query.And(
 		query.NotEqual("request_type", model.SubjectRequestTypeExternalErase),
 		query.Equal("kind", model.SubjectRequestErase),
 		query.Equal("resolved_identity", subjectID),
@@ -52,7 +52,7 @@ func (s LifecycleStore) CheckSubjectExportAllowed(ctx context.Context, workspace
 }
 
 func (s LifecycleStore) subjectRequestsForErasure(ctx context.Context, workspaceID, subjectID string) ([]model.SubjectRequest, error) {
-	statement, args, err := query.NewWorkspaceSelectBuilder(s.renderer, subjectRequestsTable, workspaceID).Columns("payload_json").
+	statement, args, err := query.NewWorkspaceSelectBuilder(s.renderer, subjectRequestsTable, workspaceID).Columns("id", "request_id", "payload_json").
 		Where(query.And(
 			query.NotEqual("request_type", model.SubjectRequestTypeExternalErase),
 			query.Or(query.Equal("resolved_identity", subjectID), query.Equal("subject_id", subjectID)),
@@ -67,14 +67,16 @@ func (s LifecycleStore) subjectRequestsForErasure(ctx context.Context, workspace
 	defer rows.Close()
 	requests := []model.SubjectRequest{}
 	for rows.Next() {
-		var raw string
-		if err := rows.Scan(&raw); err != nil {
+		var id int64
+		var requestID, raw string
+		if err := rows.Scan(&id, &requestID, &raw); err != nil {
 			return nil, err
 		}
 		var request model.SubjectRequest
 		if err := json.Unmarshal([]byte(raw), &request); err != nil {
 			return nil, err
 		}
+		request.ID, request.RequestID = id, requestID
 		if request.WorkspaceID != workspaceID || request.ResolvedIdentity != "" && request.ResolvedIdentity != subjectID {
 			continue
 		}
@@ -95,7 +97,7 @@ func (s LifecycleStore) BeginSubjectErasure(ctx context.Context, requestID, work
 		}
 		requestFound := false
 		for _, request := range requests {
-			if request.ID == requestID && request.Kind == model.SubjectRequestErase && request.ResolvedIdentity == subjectID {
+			if request.RequestID == requestID && request.Kind == model.SubjectRequestErase && request.ResolvedIdentity == subjectID {
 				requestFound = true
 			}
 			if request.Kind != model.SubjectRequestExport {
@@ -106,9 +108,9 @@ func (s LifecycleStore) BeginSubjectErasure(ctx context.Context, requestID, work
 			}
 			reference := request.ResultReference
 			if reference == "" {
-				reference = request.ID + "-export"
+				reference = request.RequestID + "-export"
 			}
-			refs = append(refs, model.SubjectExportReference{RequestID: request.ID, Reference: reference})
+			refs = append(refs, model.SubjectExportReference{RequestID: request.RequestID, Reference: reference})
 		}
 		if !requestFound {
 			return fmt.Errorf("subject erasure request does not own resolved identity")
@@ -163,7 +165,7 @@ func (s LifecycleStore) EraseSubjectRequestData(ctx context.Context, requestID, 
 			return err
 		}
 		for _, request := range requests {
-			if request.ID == requestID {
+			if request.RequestID == requestID {
 				continue
 			}
 			if request.Kind == model.SubjectRequestExport && request.Status == model.SubjectRequestExecuting {
@@ -185,7 +187,7 @@ func (s LifecycleStore) EraseSubjectRequestData(ctx context.Context, requestID, 
 				return err
 			}
 			if request.Kind == model.SubjectRequestExport {
-				statement, args, err := query.NewWorkspaceDeleteBuilder(s.renderer, subjectExecutionStepsTable, workspaceID).Where(query.Equal("request_id", request.ID)).Build()
+				statement, args, err := query.NewWorkspaceDeleteBuilder(s.renderer, subjectExecutionStepsTable, workspaceID).Where(query.Equal("request_id", request.RequestID)).Build()
 				if err != nil {
 					return err
 				}

@@ -69,7 +69,7 @@ func (s *memoryDefinitionStore) Publish(_ context.Context, command metadatasdk.D
 	}
 	s.definitions[key] = value
 	s.versions[versionID] = metadatasdk.DefinitionVersion{
-		ID: versionID, Owner: command.Owner, ResourceType: command.ResourceType, ResourceKey: command.ResourceKey,
+		VersionID: versionID, Owner: command.Owner, ResourceType: command.ResourceType, ResourceKey: command.ResourceKey,
 		SchemaVersion: command.SchemaVersion, SchemaHash: command.SchemaHash, Payload: append([]byte(nil), command.Payload...),
 	}
 	return metadatasdk.DefinitionPublishResult{Definition: cloneDefinition(value), CurrentVersionID: versionID}, nil

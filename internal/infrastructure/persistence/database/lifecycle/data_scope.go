@@ -61,7 +61,7 @@ func (s LifecycleStore) cleanupJobReferenceScopePredicate(column, workspaceID st
 	if filter.Normalized().Unrestricted {
 		return nil
 	}
-	subquery := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_cleanup_jobs", workspaceID).Columns("id")
+	subquery := query.NewWorkspaceSelectBuilder(s.renderer, "_lifecycle_cleanup_jobs", workspaceID).Columns("job_id")
 	subquery.Where(dataScopePredicate(filter, "requested_by", "owner_org_id"))
 	return query.InSubquery(column, subquery)
 }

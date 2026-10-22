@@ -107,18 +107,18 @@ func TestPolicyUseCaseOwnsServerFieldsAuthorizationAndAudit(t *testing.T) {
 func TestLifecycleAuditSeparatesOperationAndOwnerRunIdentities(t *testing.T) {
 	evidence := &evidenceMemory{}
 	service := NewLifecycleApplicationService(t.Context(), LifecycleApplicationDependencies{Evidence: evidence, Compliance: evidence})
-	job := lifecyclemodel.CleanupJob{ID: "cleanup-1", WorkspaceID: "workspace-a", OperationID: "operation-from-job"}
+	job := lifecyclemodel.CleanupJob{JobID: "cleanup_00000000000000000000000000000001", WorkspaceID: "workspace-a", OperationID: "operation-from-job"}
 	ctx := requestcontext.WithOwnerExecutionID(t.Context(), "operation-context")
-	if err := service.audit(ctx, job.WorkspaceID, "lifecycle.cleanup.succeeded", "worker", job.ID, "policy-1", job); err != nil {
+	if err := service.audit(ctx, job.WorkspaceID, "lifecycle.cleanup.succeeded", "worker", job.JobID, "policy-1", job); err != nil {
 		t.Fatal(err)
 	}
-	if len(evidence.values) != 1 || evidence.values[0].OperationID != "operation-context" || evidence.values[0].OwnerRunID != "cleanup-1" {
+	if len(evidence.values) != 1 || evidence.values[0].OperationID != "operation-context" || evidence.values[0].OwnerRunID != job.JobID {
 		t.Fatalf("correlated evidence=%#v", evidence.values)
 	}
 	if _, duplicated := evidence.values[0].Metadata["owner_run_id"]; duplicated {
 		t.Fatalf("owner run identity was duplicated into metadata: %#v", evidence.values[0].Metadata)
 	}
-	if err := service.audit(t.Context(), job.WorkspaceID, "lifecycle.cleanup.succeeded", "worker", job.ID, "policy-1", job); err != nil {
+	if err := service.audit(t.Context(), job.WorkspaceID, "lifecycle.cleanup.succeeded", "worker", job.JobID, "policy-1", job); err != nil {
 		t.Fatal(err)
 	}
 	if evidence.values[1].OperationID != "operation-from-job" {

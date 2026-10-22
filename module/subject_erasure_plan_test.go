@@ -70,36 +70,36 @@ func TestSubjectErasurePersistsAllPlansBeforeEffectsAndReusesThemAfterFailure(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if request, err = g.VerifySubjectRequest(rctx, "workspace-a", request.ID, "mfa", requester); err != nil {
+	if request, err = g.VerifySubjectRequest(rctx, "workspace-a", request.RequestID, "mfa", requester); err != nil {
 		t.Fatal(err)
 	}
-	if request, err = g.PreviewSubjectRequest(rctx, "workspace-a", request.ID, requester); err != nil {
+	if request, err = g.PreviewSubjectRequest(rctx, "workspace-a", request.RequestID, requester); err != nil {
 		t.Fatal(err)
 	}
-	if request, err = g.ApproveSubjectRequest(actx, "workspace-a", request.ID, approver); err != nil {
+	if request, err = g.ApproveSubjectRequest(actx, "workspace-a", request.RequestID, approver); err != nil {
 		t.Fatal(err)
 	}
 	checkPlans := func() {
 		t.Helper()
 		var count int
-		if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _subject_steps WHERE workspace_id = ? AND request_id = ? AND operation = ?", "workspace-a", request.ID, "erase_plan").Scan(&count); err != nil || count != 3 {
+		if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _subject_steps WHERE workspace_id = ? AND request_id = ? AND operation = ?", "workspace-a", request.RequestID, "erase_plan").Scan(&count); err != nil || count != 3 {
 			t.Fatalf("effects started before all plans committed: %d %v", count, err)
 		}
 	}
 	first.beforeExecution, second.beforeExecution = checkPlans, checkPlans
-	if request, err = g.ExecuteSubjectRequest(actx, "workspace-a", request.ID, approver); err != nil {
+	if request, err = g.ExecuteSubjectRequest(actx, "workspace-a", request.RequestID, approver); err != nil {
 		t.Fatal(err)
 	}
 	if request.Status != lifecyclemodel.SubjectRequestFailed || first.executions != 0 || second.executions != 0 {
 		t.Fatalf("preparation failure caused erasure: %s %d %d", request.Status, first.executions, second.executions)
 	}
-	if request, err = g.ExecuteSubjectRequest(actx, "workspace-a", request.ID, approver); err != nil {
+	if request, err = g.ExecuteSubjectRequest(actx, "workspace-a", request.RequestID, approver); err != nil {
 		t.Fatal(err)
 	}
 	if request.Status != lifecyclemodel.SubjectRequestFailed || first.executions != 1 || second.executions != 0 {
 		t.Fatalf("file failure was incorrectly completed: %s", request.Status)
 	}
-	if request, err = g.ExecuteSubjectRequest(actx, "workspace-a", request.ID, approver); err != nil {
+	if request, err = g.ExecuteSubjectRequest(actx, "workspace-a", request.RequestID, approver); err != nil {
 		t.Fatal(err)
 	}
 	if request.Status != lifecyclemodel.SubjectRequestSucceeded || first.plans != 1 || second.plans != 2 || first.executions != 2 || second.executions != 1 {

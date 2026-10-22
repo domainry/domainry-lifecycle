@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/domainry/domainry-foundation/entityid"
+
 	lifecyclemodel "github.com/domainry/domainry-lifecycle/internal/domain/lifecycle/model"
 )
 
@@ -89,7 +91,7 @@ func ValidatePolicyPublication(previous *lifecyclemodel.PolicyVersion, next life
 }
 
 func ValidateCleanupJob(job lifecyclemodel.CleanupJob) error {
-	if strings.TrimSpace(job.ID) == "" || strings.TrimSpace(job.WorkspaceID) == "" || strings.TrimSpace(job.PolicyKey) == "" || strings.TrimSpace(job.PolicyVersion) == "" || strings.TrimSpace(job.RequestedBy) == "" || strings.TrimSpace(job.Reason) == "" {
+	if entityid.Validate("cleanup", job.JobID) != nil || strings.TrimSpace(job.WorkspaceID) == "" || strings.TrimSpace(job.PolicyKey) == "" || strings.TrimSpace(job.PolicyVersion) == "" || strings.TrimSpace(job.RequestedBy) == "" || strings.TrimSpace(job.Reason) == "" {
 		return invalidLifecycleRequest(fmt.Errorf("cleanup identity, workspace, policy, requester, and reason are required"))
 	}
 	if job.Operation != lifecyclemodel.OperationArchive && job.Operation != lifecyclemodel.OperationPurge {
@@ -102,7 +104,7 @@ func ValidateCleanupJob(job lifecyclemodel.CleanupJob) error {
 }
 
 func TransitionSubjectRequest(current, next lifecyclemodel.SubjectRequest) error {
-	if current.ID == "" || next.ID != current.ID || current.WorkspaceID == "" || next.WorkspaceID != current.WorkspaceID || next.UpdatedAt.IsZero() || next.UpdatedAt.Before(current.UpdatedAt) {
+	if entityid.Validate("subreq", current.RequestID) != nil || next.RequestID != current.RequestID || current.WorkspaceID == "" || next.WorkspaceID != current.WorkspaceID || next.UpdatedAt.IsZero() || next.UpdatedAt.Before(current.UpdatedAt) {
 		return invalidLifecycleRequest(fmt.Errorf("subject request identity and monotonic update are required"))
 	}
 	switch {
@@ -180,7 +182,7 @@ func EvaluateEligibility(input lifecyclemodel.EligibilityInput) (lifecyclemodel.
 			return lifecyclemodel.EligibilityDecision{}, err
 		}
 		if legalHoldApplies(hold, input.Target, input.Now) {
-			blockers = append(blockers, "legal_hold:"+hold.ID)
+			blockers = append(blockers, "legal_hold:"+hold.HoldID)
 		}
 	}
 	sort.Strings(blockers)
@@ -188,7 +190,7 @@ func EvaluateEligibility(input lifecyclemodel.EligibilityInput) (lifecyclemodel.
 }
 
 func ValidateLegalHold(hold lifecyclemodel.LegalHold) error {
-	if strings.TrimSpace(hold.ID) == "" || strings.TrimSpace(hold.WorkspaceID) == "" || strings.TrimSpace(hold.Reason) == "" || strings.TrimSpace(hold.Authority) == "" || strings.TrimSpace(hold.AuditEvidence) == "" {
+	if entityid.Validate("hold", hold.HoldID) != nil || strings.TrimSpace(hold.WorkspaceID) == "" || strings.TrimSpace(hold.Reason) == "" || strings.TrimSpace(hold.Authority) == "" || strings.TrimSpace(hold.AuditEvidence) == "" {
 		return invalidLifecycleRequest(fmt.Errorf("legal hold id, workspace, reason, authority, and audit evidence are required"))
 	}
 	if hold.StartsAt.IsZero() || hold.ReviewAt.IsZero() {

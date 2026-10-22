@@ -37,6 +37,11 @@ func buildMigration(renderer modulehost.Dialect, version uint, name string, tabl
 	for _, definition := range tableDefinitions {
 		builder := ormschema.NewTable(renderer, definition.name).
 			IfNotExists().Columns(definition.columns...)
+		for _, ownership := range SchemaOwnership() {
+			if ownership.Name == definition.name && ownership.EntityIDColumn != "" {
+				builder.IdentityColumns(ownership.EntityIDColumn)
+			}
+		}
 		if len(definition.primary) > 0 {
 			builder.PrimaryKey(definition.primary...)
 		}
@@ -85,19 +90,24 @@ func millis(name string) ormschema.ColumnDefinition {
 func optionalMillis(name string) ormschema.ColumnDefinition {
 	return ormschema.Column(name, ormschema.BigInt()).NotNull().DefaultValue(0)
 }
+func physicalID() ormschema.ColumnDefinition {
+	return ormschema.Column("id", ormschema.BigInt()).NotNull().AutoIncrement()
+}
 func tables() []table {
 	return []table{
-		{LifecycleLegalHoldsTable, []ormschema.ColumnDefinition{key("id"), key("workspace_id"), optionalKey("owner"), optionalKey("resource_type"), optionalKey("resource_id"), optionalKey("created_by"), optionalKey("owner_org_id"), millis("starts_at"), optionalMillis("ends_at"), millis("review_at"), text("payload_json")}, []string{"workspace_id", "id"}},
-		{LifecycleCleanupJobsTable, []ormschema.ColumnDefinition{key("id"), key("workspace_id"), optionalKey("operation_id"), optionalKey("requested_by"), optionalKey("owner_org_id"), key("policy_key"), key("policy_version"), key("status"), optionalKey("checkpoint_value"), optionalKey("lease_owner"), optionalMillis("lease_expires_at"), ormschema.Column("fencing_token", ormschema.BigInt()).NotNull().DefaultValue(int64(0)), millis("updated_at"), text("payload_json")}, []string{"workspace_id", "id"}},
+		{LifecycleLegalHoldsTable, []ormschema.ColumnDefinition{physicalID(), key("hold_id"), key("workspace_id"), optionalKey("owner"), optionalKey("resource_type"), optionalKey("resource_id"), optionalKey("created_by"), optionalKey("owner_org_id"), millis("starts_at"), optionalMillis("ends_at"), millis("review_at"), text("payload_json")}, []string{"id"}},
+		{LifecycleCleanupJobsTable, []ormschema.ColumnDefinition{physicalID(), key("job_id"), key("workspace_id"), optionalKey("operation_id"), optionalKey("requested_by"), optionalKey("owner_org_id"), key("policy_key"), key("policy_version"), key("status"), optionalKey("checkpoint_value"), optionalKey("lease_owner"), optionalMillis("lease_expires_at"), ormschema.Column("fencing_token", ormschema.BigInt()).NotNull().DefaultValue(int64(0)), millis("updated_at"), text("payload_json")}, []string{"id"}},
 	}
 }
 
 func indexes() []index {
 	return []index{
+		{LifecycleLegalHoldsTable, "uq_lifecycle_hold_id", true, []string{"hold_id"}},
 		{LifecycleLegalHoldsTable, "idx_lifecycle_hold_scope", false, []string{"workspace_id", "owner", "resource_type", "resource_id"}},
 		{LifecycleLegalHoldsTable, "idx_lifecycle_hold_creator", false, []string{"workspace_id", "created_by"}},
 		{LifecycleLegalHoldsTable, "idx_lifecycle_hold_owner_org", false, []string{"workspace_id", "owner_org_id"}},
 		{LifecycleCleanupJobsTable, "idx_lifecycle_cleanup_claim", false, []string{"workspace_id", "status", "lease_expires_at", "updated_at"}},
+		{LifecycleCleanupJobsTable, "uq_lifecycle_cleanup_job_id", true, []string{"job_id"}},
 		{LifecycleCleanupJobsTable, "idx_lifecycle_cleanup_operation", false, []string{"workspace_id", "operation_id"}},
 		{LifecycleCleanupJobsTable, "idx_lifecycle_cleanup_requester", false, []string{"workspace_id", "requested_by"}},
 		{LifecycleCleanupJobsTable, "idx_lifecycle_cleanup_owner_org", false, []string{"workspace_id", "owner_org_id"}},

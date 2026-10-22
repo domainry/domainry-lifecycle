@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/domainry/domainry-foundation/entityid"
 	requestcontext "github.com/domainry/domainry-foundation/requestcontext"
 	lifecyclesdk "github.com/domainry/domainry-lifecycle-sdk"
 	lifecycleaccess "github.com/domainry/domainry-lifecycle-sdk/access"
@@ -128,7 +129,10 @@ func (s *LifecycleApplicationService) CreateLegalHold(ctx context.Context, hold 
 	if hold.WorkspaceID != principal.WorkspaceID {
 		return lifecyclemodel.LegalHold{}, lifecycleForbidden(fmt.Errorf("lifecycle workspace scope mismatch"))
 	}
-	hold.ID = requestcontext.NewRequestID()
+	hold.HoldID, err = entityid.New("hold")
+	if err != nil {
+		return lifecyclemodel.LegalHold{}, err
+	}
 	hold.CreatedBy, hold.OwnerOrgID = principal.UserID, filter.SubjectOrgID
 	if err := lifecyclepolicy.ValidateLegalHold(hold); err != nil {
 		return lifecyclemodel.LegalHold{}, err
@@ -137,7 +141,15 @@ func (s *LifecycleApplicationService) CreateLegalHold(ctx context.Context, hold 
 		if err := s.legalHolds.SaveLegalHold(transactionContext, hold); err != nil {
 			return err
 		}
-		return s.audit(transactionContext, hold.WorkspaceID, "lifecycle.legal_hold.created", principal.UserID, hold.ID, "", hold)
+		stored, found, err := s.legalHolds.GetLegalHold(transactionContext, hold.WorkspaceID, hold.HoldID, filter)
+		if err != nil {
+			return fmt.Errorf("reload created legal hold: %w", err)
+		}
+		if !found {
+			return fmt.Errorf("reload created legal hold: not found")
+		}
+		hold = stored
+		return s.audit(transactionContext, hold.WorkspaceID, "lifecycle.legal_hold.created", principal.UserID, hold.HoldID, "", hold)
 	})
 	return hold, err
 }
@@ -166,7 +178,7 @@ func (s *LifecycleApplicationService) EndLegalHold(ctx context.Context, workspac
 		if !updated {
 			return lifecycleNotFound(fmt.Errorf("legal hold not found"))
 		}
-		return s.audit(transactionContext, workspaceID, "lifecycle.legal_hold.ended", principal.UserID, hold.ID, "", hold)
+		return s.audit(transactionContext, workspaceID, "lifecycle.legal_hold.ended", principal.UserID, hold.HoldID, "", hold)
 	})
 	return hold, err
 }
@@ -199,7 +211,10 @@ func (s *LifecycleApplicationService) CreateCleanupJob(ctx context.Context, job 
 	if err != nil {
 		return lifecyclemodel.CleanupJob{}, err
 	}
-	job.ID = requestcontext.NewRequestID()
+	job.JobID, err = entityid.New("cleanup")
+	if err != nil {
+		return lifecyclemodel.CleanupJob{}, err
+	}
 	job.PolicyVersion = policyVersion.Policy.Version
 	job.RequestedBy, job.OwnerOrgID = principal.UserID, filter.SubjectOrgID
 	if job.Status == "" {
@@ -225,7 +240,15 @@ func (s *LifecycleApplicationService) CreateCleanupJob(ctx context.Context, job 
 		if err := s.cleanupJobs.SaveCleanupJob(transactionContext, job); err != nil {
 			return err
 		}
-		return s.audit(transactionContext, job.WorkspaceID, "lifecycle.cleanup.created", principal.UserID, job.ID, job.PolicyKey, job)
+		stored, found, err := s.cleanupJobs.GetCleanupJob(transactionContext, job.WorkspaceID, job.JobID)
+		if err != nil {
+			return fmt.Errorf("reload created cleanup job: %w", err)
+		}
+		if !found {
+			return fmt.Errorf("reload created cleanup job: not found")
+		}
+		job = stored
+		return s.audit(transactionContext, job.WorkspaceID, "lifecycle.cleanup.created", principal.UserID, job.JobID, job.PolicyKey, job)
 	})
 	return job, err
 }
@@ -307,7 +330,7 @@ func (s *LifecycleApplicationService) ProcessCleanupJob(ctx context.Context, wor
 		if claimed.Status != lifecyclemodel.CleanupStatusSucceeded {
 			return nil
 		}
-		return s.audit(transactionContext, workspaceID, "lifecycle.cleanup.succeeded", principal.UserID, claimed.ID, claimed.PolicyKey, claimed)
+		return s.audit(transactionContext, workspaceID, "lifecycle.cleanup.succeeded", principal.UserID, claimed.JobID, claimed.PolicyKey, claimed)
 	})
 	return claimed, err
 }
@@ -317,7 +340,10 @@ func (s *LifecycleApplicationService) CreateSubjectRequest(ctx context.Context, 
 	if err != nil {
 		return lifecyclemodel.SubjectRequest{}, err
 	}
-	request.ID = requestcontext.NewRequestID()
+	request.RequestID, err = entityid.New("subreq")
+	if err != nil {
+		return lifecyclemodel.SubjectRequest{}, err
+	}
 	request.RequestedBy, request.OwnerOrgID, request.Status = principal.UserID, filter.SubjectOrgID, lifecyclemodel.SubjectRequestPendingVerification
 	request.CreatedAt, request.UpdatedAt = time.Now().UTC(), time.Now().UTC()
 	if request.Kind != lifecyclemodel.SubjectRequestExport && request.Kind != lifecyclemodel.SubjectRequestErase {
@@ -330,7 +356,15 @@ func (s *LifecycleApplicationService) CreateSubjectRequest(ctx context.Context, 
 		if err := s.subjectRequests.SaveSubjectRequest(transactionContext, request); err != nil {
 			return err
 		}
-		return s.audit(transactionContext, request.WorkspaceID, "lifecycle.subject.requested", principal.UserID, request.ID, "", request)
+		stored, found, err := s.subjectRequests.GetSubjectRequest(transactionContext, request.WorkspaceID, request.RequestID, filter)
+		if err != nil {
+			return fmt.Errorf("reload created subject request: %w", err)
+		}
+		if !found {
+			return fmt.Errorf("reload created subject request: not found")
+		}
+		request = stored
+		return s.audit(transactionContext, request.WorkspaceID, "lifecycle.subject.requested", principal.UserID, request.RequestID, "", request)
 	})
 	return request, err
 }
@@ -415,7 +449,7 @@ func (s *LifecycleApplicationService) ExecuteSubjectRequest(ctx context.Context,
 		return lifecyclemodel.SubjectRequest{}, err
 	}
 	result := map[string]json.RawMessage{}
-	steps, err := s.subjectRequests.ListSubjectExecutionSteps(ctx, workspaceID, executing.ID)
+	steps, err := s.subjectRequests.ListSubjectExecutionSteps(ctx, workspaceID, executing.RequestID)
 	completedSteps := make(map[string]json.RawMessage, len(steps))
 	for _, step := range steps {
 		completedSteps[subjectExecutionStepKey(step.Owner, step.Operation)] = append(json.RawMessage(nil), step.Payload...)
@@ -442,7 +476,7 @@ func (s *LifecycleApplicationService) ExecuteSubjectRequest(ctx context.Context,
 				continue
 			}
 			var plan json.RawMessage
-			plan, err = planner.PrepareSubjectErasure(ctx, executing.ID, workspaceID, executing.ResolvedIdentity)
+			plan, err = planner.PrepareSubjectErasure(ctx, executing.RequestID, workspaceID, executing.ResolvedIdentity)
 			if err != nil {
 				break
 			}
@@ -476,7 +510,16 @@ func (s *LifecycleApplicationService) ExecuteSubjectRequest(ctx context.Context,
 		}
 		if err == nil {
 			for index := range values {
-				values[index].WorkspaceID, values[index].RequestID = workspaceID, executing.ID
+				values[index].WorkspaceID, values[index].ParentRequestID = workspaceID, executing.RequestID
+				if values[index].RequestID == "" {
+					values[index].RequestID, err = entityid.New("subreq")
+					if err != nil {
+						break
+					}
+				}
+			}
+			if err != nil {
+				return lifecyclemodel.SubjectRequest{}, err
 			}
 			payload, marshalErr := json.Marshal(values)
 			if marshalErr != nil {
@@ -498,7 +541,7 @@ func (s *LifecycleApplicationService) ExecuteSubjectRequest(ctx context.Context,
 			if previous, found := completedSteps[subjectExecutionStepKey(owner, operation)]; found {
 				payload = append(json.RawMessage(nil), previous...)
 			} else if executing.Kind == lifecyclemodel.SubjectRequestExport {
-				payload, err = handler.ExportSubjectForRequest(ctx, executing.ID, workspaceID, executing.ResolvedIdentity)
+				payload, err = handler.ExportSubjectForRequest(ctx, executing.RequestID, workspaceID, executing.ResolvedIdentity)
 			} else {
 				externalHolds, conversionErr := convertValue[[]sdkmodel.LegalHold](holds)
 				if conversionErr != nil {
@@ -506,9 +549,9 @@ func (s *LifecycleApplicationService) ExecuteSubjectRequest(ctx context.Context,
 					break
 				}
 				if planner, prepared := handler.(lifecyclecontract.PreparedSubjectErasureHandler); prepared {
-					payload, err = planner.ErasePreparedSubject(ctx, executing.ID, workspaceID, executing.ResolvedIdentity, completedSteps[subjectExecutionStepKey(owner, "erase_plan")], externalHolds)
+					payload, err = planner.ErasePreparedSubject(ctx, executing.RequestID, workspaceID, executing.ResolvedIdentity, completedSteps[subjectExecutionStepKey(owner, "erase_plan")], externalHolds)
 				} else {
-					payload, err = handler.EraseSubjectForRequest(ctx, executing.ID, workspaceID, executing.ResolvedIdentity, externalHolds)
+					payload, err = handler.EraseSubjectForRequest(ctx, executing.RequestID, workspaceID, executing.ResolvedIdentity, externalHolds)
 				}
 			}
 			if err != nil {
@@ -537,14 +580,14 @@ func (s *LifecycleApplicationService) ExecuteSubjectRequest(ctx context.Context,
 		} else {
 			var stored lifecyclecontract.SubjectExportReference
 			stored, err = s.artifacts.PutSubjectExport(ctx, lifecyclecontract.SubjectExportWrite{
-				WorkspaceID: workspaceID, RequestID: completed.ID, ResolvedIdentity: completed.ResolvedIdentity,
+				WorkspaceID: workspaceID, RequestID: completed.RequestID, ResolvedIdentity: completed.ResolvedIdentity,
 				CreatedBy: completed.RequestedBy, OwnerOrgID: completed.OwnerOrgID, Payload: raw,
 				ExpiresAt: completed.UpdatedAt.Add(24 * time.Hour),
 			})
 			completed.ResultReference, completed.DownloadExpiresAt = stored.ArtifactID, stored.ExpiresAt
 		}
 	} else {
-		completed.ResultReference = "erase-evidence:" + completed.ID
+		completed.ResultReference = "erase-evidence:" + completed.RequestID
 		completed.Reason = "[erased]"
 		completed.SecondFactorRef = ""
 		completed.ImpactPreview = nil

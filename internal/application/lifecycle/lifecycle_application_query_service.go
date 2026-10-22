@@ -101,7 +101,7 @@ func (s *LifecycleApplicationService) ReconcileExternalErasure(ctx context.Conte
 		if !found {
 			return lifecycleNotFound(fmt.Errorf("external erasure not found"))
 		}
-		return s.audit(transactionContext, principal.WorkspaceID, "lifecycle.external_erasure.reconciled", principal.UserID, item.ID, "", item)
+		return s.audit(transactionContext, principal.WorkspaceID, "lifecycle.external_erasure.reconciled", principal.UserID, item.RequestID, "", item)
 	})
 	if err != nil {
 		return lifecyclemodel.ExternalErasure{}, err
@@ -130,5 +130,5 @@ func (s *LifecycleApplicationService) DownloadSubjectExport(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	return payload, s.audit(ctx, workspaceID, "lifecycle.subject.export_downloaded", principal.UserID, request.ID, "", map[string]any{"request_id": request.ID})
+	return payload, s.audit(ctx, workspaceID, "lifecycle.subject.export_downloaded", principal.UserID, request.RequestID, "", map[string]any{"request_id": request.RequestID})
 }

@@ -79,7 +79,10 @@ func (a *integrationAudit) Append(ctx context.Context, request auditcontract.App
 	}
 	metadata, _ := json.Marshal(event.Metadata)
 	after, _ := json.Marshal(event.After)
-	_, err = a.db.ExecContext(ctx, `INSERT INTO _audit_events (workspace_id,id,family,event,object_key,record_id,actor_id,summary,metadata_json,after_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, event.WorkspaceID, event.ID, event.Family, event.Event, event.ObjectKey, event.RecordID, event.ActorID, event.Summary, string(metadata), string(after), event.CreatedAt)
+	_, err = a.db.ExecContext(ctx, `INSERT INTO _audit_events (audit_event_id,workspace_id,family,event,object_key,record_id,actor_id,summary,metadata_json,after_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, event.AuditEventID, event.WorkspaceID, event.Family, event.Event, event.ObjectKey, event.RecordID, event.ActorID, event.Summary, string(metadata), string(after), event.CreatedAt)
+	if err == nil {
+		err = a.db.QueryRowContext(ctx, `SELECT id FROM _audit_events WHERE audit_event_id = ?`, event.AuditEventID).Scan(&event.ID)
+	}
 	return event, err
 }
 
@@ -90,7 +93,10 @@ func (*integrationAudit) AppendWithin(ctx context.Context, transaction auditcont
 	}
 	metadata, _ := json.Marshal(event.Metadata)
 	after, _ := json.Marshal(event.After)
-	_, err = transaction.ExecContext(ctx, `INSERT INTO _audit_events (workspace_id,id,family,event,object_key,record_id,actor_id,summary,metadata_json,after_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, event.WorkspaceID, event.ID, event.Family, event.Event, event.ObjectKey, event.RecordID, event.ActorID, event.Summary, string(metadata), string(after), event.CreatedAt)
+	_, err = transaction.ExecContext(ctx, `INSERT INTO _audit_events (audit_event_id,workspace_id,family,event,object_key,record_id,actor_id,summary,metadata_json,after_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, event.AuditEventID, event.WorkspaceID, event.Family, event.Event, event.ObjectKey, event.RecordID, event.ActorID, event.Summary, string(metadata), string(after), event.CreatedAt)
+	if err == nil {
+		err = transaction.QueryRowContext(ctx, `SELECT id FROM _audit_events WHERE audit_event_id = ?`, event.AuditEventID).Scan(&event.ID)
+	}
 	return event, err
 }
 
@@ -286,7 +292,7 @@ func newIntegrationHost(t *testing.T) integrationHost {
 	}
 	renderer := dialect.WithSchema("")
 	registrar := &integrationRegistrar{database: db}
-	if _, err := db.ExecContext(t.Context(), `CREATE TABLE _audit_events (workspace_id TEXT NOT NULL, id TEXT NOT NULL, family TEXT NOT NULL, event TEXT NOT NULL, object_key TEXT NOT NULL, record_id TEXT NOT NULL, actor_id TEXT NOT NULL, summary TEXT NOT NULL, metadata_json TEXT NOT NULL, after_json TEXT NOT NULL, created_at BIGINT NOT NULL, PRIMARY KEY (workspace_id,id))`); err != nil {
+	if _, err := db.ExecContext(t.Context(), `CREATE TABLE _audit_events (id INTEGER PRIMARY KEY AUTOINCREMENT, audit_event_id TEXT NOT NULL UNIQUE, workspace_id TEXT NOT NULL, family TEXT NOT NULL, event TEXT NOT NULL, object_key TEXT NOT NULL, record_id TEXT NOT NULL, actor_id TEXT NOT NULL, summary TEXT NOT NULL, metadata_json TEXT NOT NULL, after_json TEXT NOT NULL, created_at BIGINT NOT NULL)`); err != nil {
 		t.Fatal(err)
 	}
 	host := integrationHost{
@@ -467,33 +473,33 @@ func TestModuleSubjectExportBusinessContractEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.Status != lifecyclemodel.SubjectRequestPendingVerification || created.ID == "" || created.RequestedBy != "requester" {
+	if created.Status != lifecyclemodel.SubjectRequestPendingVerification || created.ID == 0 || created.RequestID == "" || created.RequestedBy != "requester" {
 		t.Fatalf("created subject request=%#v", created)
 	}
 	listPrincipal := principalFor("reviewer", lifecyclesdk.ActionLifecycleSubjectRequestsList)
 	listed, err := governance.ListSubjectRequests(integrationIdentityContext(t.Context(), listPrincipal, identitysdk.DataScopeAll), 10, listPrincipal)
-	if err != nil || len(listed) != 1 || listed[0].ID != created.ID {
+	if err != nil || len(listed) != 1 || listed[0].RequestID != created.RequestID {
 		t.Fatalf("listed subject requests=%#v err=%v", listed, err)
 	}
 	readPrincipal := principalFor("reviewer", lifecyclesdk.ActionLifecycleSubjectRequestsRead)
-	read, err := governance.GetSubjectRequest(integrationIdentityContext(t.Context(), readPrincipal, identitysdk.DataScopeAll), "workspace-a", created.ID, readPrincipal)
-	if err != nil || read.ID != created.ID || read.SubjectID != "subject-1" {
+	read, err := governance.GetSubjectRequest(integrationIdentityContext(t.Context(), readPrincipal, identitysdk.DataScopeAll), "workspace-a", created.RequestID, readPrincipal)
+	if err != nil || read.RequestID != created.RequestID || read.SubjectID != "subject-1" {
 		t.Fatalf("read subject request=%#v err=%v", read, err)
 	}
 
-	if _, err := governance.VerifySubjectRequest(integrationIdentityContext(t.Context(), createPrincipal, identitysdk.DataScopeOwner), "workspace-a", created.ID, "mfa-1", createPrincipal); err == nil || !strings.Contains(err.Error(), "auth.permission_denied") {
+	if _, err := governance.VerifySubjectRequest(integrationIdentityContext(t.Context(), createPrincipal, identitysdk.DataScopeOwner), "workspace-a", created.RequestID, "mfa-1", createPrincipal); err == nil || !strings.Contains(err.Error(), "auth.permission_denied") {
 		t.Fatalf("another Action authorized verify: %v", err)
 	}
 	verifyPrincipal := principalFor("verifier", lifecyclesdk.ActionLifecycleSubjectRequestsVerify)
 	verifyAllContext := integrationIdentityContext(t.Context(), verifyPrincipal, identitysdk.DataScopeAll)
-	if _, err := governance.VerifySubjectRequest(verifyAllContext, "workspace-b", created.ID, "mfa-1", verifyPrincipal); err == nil || !strings.Contains(err.Error(), "auth.permission_denied") {
+	if _, err := governance.VerifySubjectRequest(verifyAllContext, "workspace-b", created.RequestID, "mfa-1", verifyPrincipal); err == nil || !strings.Contains(err.Error(), "auth.permission_denied") {
 		t.Fatalf("cross-workspace verify error=%v", err)
 	}
 	ownerOnlyVerifier := principalFor("other-user", lifecyclesdk.ActionLifecycleSubjectRequestsVerify)
-	if _, err := governance.VerifySubjectRequest(integrationIdentityContext(t.Context(), ownerOnlyVerifier, identitysdk.DataScopeOwner), "workspace-a", created.ID, "mfa-1", ownerOnlyVerifier); err == nil || !strings.Contains(err.Error(), "not_found") {
+	if _, err := governance.VerifySubjectRequest(integrationIdentityContext(t.Context(), ownerOnlyVerifier, identitysdk.DataScopeOwner), "workspace-a", created.RequestID, "mfa-1", ownerOnlyVerifier); err == nil || !strings.Contains(err.Error(), "not_found") {
 		t.Fatalf("owner-scoped verifier accessed another user's request: %v", err)
 	}
-	verified, err := governance.VerifySubjectRequest(verifyAllContext, "workspace-a", created.ID, "mfa-1", verifyPrincipal)
+	verified, err := governance.VerifySubjectRequest(verifyAllContext, "workspace-a", created.RequestID, "mfa-1", verifyPrincipal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -510,7 +516,7 @@ func TestModuleSubjectExportBusinessContractEndToEnd(t *testing.T) {
 	previewOutcomes := make(chan previewOutcome, 2)
 	for range 2 {
 		go func() {
-			request, previewErr := governance.PreviewSubjectRequest(previewContext, "workspace-a", created.ID, previewPrincipal)
+			request, previewErr := governance.PreviewSubjectRequest(previewContext, "workspace-a", created.RequestID, previewPrincipal)
 			previewOutcomes <- previewOutcome{request: request, err: previewErr}
 		}()
 	}
@@ -531,11 +537,11 @@ func TestModuleSubjectExportBusinessContractEndToEnd(t *testing.T) {
 		t.Fatalf("concurrent preview outcomes successes=%d conflicts=%d request=%#v", previewSuccesses, previewConflicts, previewed)
 	}
 	var previewAudits int
-	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _audit_events WHERE workspace_id = ? AND event = ? AND record_id = ?", "workspace-a", "lifecycle.subject.previewed", created.ID).Scan(&previewAudits); err != nil || previewAudits != 1 {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _audit_events WHERE workspace_id = ? AND event = ? AND record_id = ?", "workspace-a", "lifecycle.subject.previewed", created.RequestID).Scan(&previewAudits); err != nil || previewAudits != 1 {
 		t.Fatalf("preview audit rows=%d err=%v", previewAudits, err)
 	}
 	var subjectAuditAfter string
-	if err := host.db.QueryRowContext(t.Context(), "SELECT after_json FROM _audit_events WHERE workspace_id = ? AND event = ? AND record_id = ?", "workspace-a", "lifecycle.subject.verified", created.ID).Scan(&subjectAuditAfter); err != nil {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT after_json FROM _audit_events WHERE workspace_id = ? AND event = ? AND record_id = ?", "workspace-a", "lifecycle.subject.verified", created.RequestID).Scan(&subjectAuditAfter); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(subjectAuditAfter, "subject-1") || strings.Contains(subjectAuditAfter, "mfa-1") || !strings.Contains(subjectAuditAfter, `"status":"verified"`) {
@@ -543,11 +549,11 @@ func TestModuleSubjectExportBusinessContractEndToEnd(t *testing.T) {
 	}
 
 	selfApprover := principalFor("requester", lifecyclesdk.ActionLifecycleSubjectRequestsApprove)
-	if _, err := governance.ApproveSubjectRequest(integrationIdentityContext(t.Context(), selfApprover, identitysdk.DataScopeAll), "workspace-a", created.ID, selfApprover); err == nil {
+	if _, err := governance.ApproveSubjectRequest(integrationIdentityContext(t.Context(), selfApprover, identitysdk.DataScopeAll), "workspace-a", created.RequestID, selfApprover); err == nil {
 		t.Fatal("requester self-approval was accepted")
 	}
 	approver := principalFor("approver", lifecyclesdk.ActionLifecycleSubjectRequestsApprove)
-	approved, err := governance.ApproveSubjectRequest(integrationIdentityContext(t.Context(), approver, identitysdk.DataScopeAll), "workspace-a", created.ID, approver)
+	approved, err := governance.ApproveSubjectRequest(integrationIdentityContext(t.Context(), approver, identitysdk.DataScopeAll), "workspace-a", created.RequestID, approver)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -557,14 +563,14 @@ func TestModuleSubjectExportBusinessContractEndToEnd(t *testing.T) {
 
 	executor := principalFor("operator", lifecyclesdk.ActionLifecycleSubjectRequestsExecute)
 	executeContext := integrationIdentityContext(t.Context(), executor, identitysdk.DataScopeAll)
-	failed, err := governance.ExecuteSubjectRequest(executeContext, "workspace-a", created.ID, executor)
+	failed, err := governance.ExecuteSubjectRequest(executeContext, "workspace-a", created.RequestID, executor)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if failed.Status != lifecyclemodel.SubjectRequestFailed || failed.ExecutionAttempt != 1 || first.exportAttempts != 1 || second.exportAttempts != 1 {
 		t.Fatalf("first execution request=%#v attempts=(%d,%d)", failed, first.exportAttempts, second.exportAttempts)
 	}
-	succeeded, err := governance.ExecuteSubjectRequest(executeContext, "workspace-a", created.ID, executor)
+	succeeded, err := governance.ExecuteSubjectRequest(executeContext, "workspace-a", created.RequestID, executor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -575,7 +581,7 @@ func TestModuleSubjectExportBusinessContractEndToEnd(t *testing.T) {
 	if err != nil || !found || artifact.Owner != sharedartifact.OwnerLifecycle || artifact.Kind != "subject_export" || artifact.Status != sharedartifact.StatusAvailable || !artifact.ExpiresAt.Equal(succeeded.DownloadExpiresAt) {
 		t.Fatalf("shared subject export Artifact=%#v found=%v err=%v", artifact, found, err)
 	}
-	bindings, err := host.artifacts.Bindings(t.Context(), "workspace-a", artifact.ID)
+	bindings, err := host.artifacts.Bindings(t.Context(), "workspace-a", artifact.ArtifactID)
 	if err != nil || len(bindings) != 2 {
 		t.Fatalf("shared subject export bindings=%#v err=%v", bindings, err)
 	}
@@ -583,14 +589,14 @@ func TestModuleSubjectExportBusinessContractEndToEnd(t *testing.T) {
 	for _, binding := range bindings {
 		bound[binding.Kind] = binding.ResourceID
 	}
-	if bound[sharedartifact.BindingJob] != succeeded.ID || bound[sharedartifact.BindingSubject] != succeeded.ResolvedIdentity {
+	if bound[sharedartifact.BindingJob] != succeeded.RequestID || bound[sharedartifact.BindingSubject] != succeeded.ResolvedIdentity {
 		t.Fatalf("shared subject export binding identities=%#v", bound)
 	}
 	contentInfo, err := host.content.Stat(t.Context(), "workspace-a", artifact.StorageReference)
 	if err != nil || contentInfo.SHA256 != artifact.ContentSHA256 || contentInfo.Size != artifact.SizeBytes {
 		t.Fatalf("shared subject export content=%#v err=%v", contentInfo, err)
 	}
-	if _, err := governance.ExecuteSubjectRequest(executeContext, "workspace-a", created.ID, executor); err == nil {
+	if _, err := governance.ExecuteSubjectRequest(executeContext, "workspace-a", created.RequestID, executor); err == nil {
 		t.Fatal("terminal subject request accepted another execution transition")
 	}
 	if first.exportAttempts != 1 || second.exportAttempts != 2 {
@@ -598,7 +604,7 @@ func TestModuleSubjectExportBusinessContractEndToEnd(t *testing.T) {
 	}
 
 	downloadPrincipal := principalFor("requester", lifecyclesdk.ActionLifecycleSubjectExportsDownload)
-	payload, err := governance.DownloadSubjectExport(integrationIdentityContext(t.Context(), downloadPrincipal, identitysdk.DataScopeOwner), "workspace-a", created.ID, downloadPrincipal, time.Now().UTC())
+	payload, err := governance.DownloadSubjectExport(integrationIdentityContext(t.Context(), downloadPrincipal, identitysdk.DataScopeOwner), "workspace-a", created.RequestID, downloadPrincipal, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -608,7 +614,7 @@ func TestModuleSubjectExportBusinessContractEndToEnd(t *testing.T) {
 	}
 	var persistedStatus string
 	var persistedPayload string
-	if err := host.db.QueryRowContext(t.Context(), "SELECT status, payload_json FROM _subject_requests WHERE workspace_id = ? AND id = ?", "workspace-a", created.ID).Scan(&persistedStatus, &persistedPayload); err != nil {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT status, payload_json FROM _subject_requests WHERE workspace_id = ? AND request_id = ?", "workspace-a", created.RequestID).Scan(&persistedStatus, &persistedPayload); err != nil {
 		t.Fatal(err)
 	}
 	var persisted lifecyclemodel.SubjectRequest
@@ -630,10 +636,10 @@ func TestModuleSubjectExportBusinessContractEndToEnd(t *testing.T) {
 		t.Fatalf("persisted subject request=%#v status=%q", persisted, persistedStatus)
 	}
 	var stepRows, auditRows int
-	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _subject_steps WHERE workspace_id = ? AND request_id = ?", "workspace-a", created.ID).Scan(&stepRows); err != nil || stepRows != 3 {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _subject_steps WHERE workspace_id = ? AND request_id = ?", "workspace-a", created.RequestID).Scan(&stepRows); err != nil || stepRows != 3 {
 		t.Fatalf("execution step rows=%d err=%v", stepRows, err)
 	}
-	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _audit_events WHERE workspace_id = ? AND record_id = ?", "workspace-a", created.ID).Scan(&auditRows); err != nil || auditRows != 9 {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _audit_events WHERE workspace_id = ? AND record_id = ?", "workspace-a", created.RequestID).Scan(&auditRows); err != nil || auditRows != 9 {
 		t.Fatalf("subject audit rows=%d err=%v", auditRows, err)
 	}
 }
@@ -729,29 +735,29 @@ func TestSubjectExecutionRetryReusesCompletedOwnerSteps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if request, err = governance.VerifySubjectRequest(requesterContext, "workspace-a", request.ID, "mfa-1", requester); err != nil {
+	if request, err = governance.VerifySubjectRequest(requesterContext, "workspace-a", request.RequestID, "mfa-1", requester); err != nil {
 		t.Fatal(err)
 	}
-	if request, err = governance.PreviewSubjectRequest(requesterContext, "workspace-a", request.ID, requester); err != nil {
+	if request, err = governance.PreviewSubjectRequest(requesterContext, "workspace-a", request.RequestID, requester); err != nil {
 		t.Fatal(err)
 	}
-	if request, err = governance.ApproveSubjectRequest(approverContext, "workspace-a", request.ID, approver); err != nil {
+	if request, err = governance.ApproveSubjectRequest(approverContext, "workspace-a", request.RequestID, approver); err != nil {
 		t.Fatal(err)
 	}
-	if request, err = governance.ExecuteSubjectRequest(approverContext, "workspace-a", request.ID, approver); err != nil {
+	if request, err = governance.ExecuteSubjectRequest(approverContext, "workspace-a", request.RequestID, approver); err != nil {
 		t.Fatal(err)
 	}
 	if request.Status != lifecyclemodel.SubjectRequestFailed || first.exportAttempts != 1 || second.exportAttempts != 1 {
 		t.Fatalf("first execution request=%#v attempts=(%d,%d)", request, first.exportAttempts, second.exportAttempts)
 	}
-	if request, err = governance.ExecuteSubjectRequest(approverContext, "workspace-a", request.ID, approver); err != nil {
+	if request, err = governance.ExecuteSubjectRequest(approverContext, "workspace-a", request.RequestID, approver); err != nil {
 		t.Fatal(err)
 	}
 	if request.Status != lifecyclemodel.SubjectRequestSucceeded || first.exportAttempts != 1 || second.exportAttempts != 2 {
 		t.Fatalf("retried execution request=%#v attempts=(%d,%d)", request, first.exportAttempts, second.exportAttempts)
 	}
 	var stepRows int
-	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _subject_steps WHERE workspace_id = ? AND request_id = ?", "workspace-a", request.ID).Scan(&stepRows); err != nil || stepRows != 3 {
+	if err := host.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM _subject_steps WHERE workspace_id = ? AND request_id = ?", "workspace-a", request.RequestID).Scan(&stepRows); err != nil || stepRows != 3 {
 		t.Fatalf("execution step rows=%d err=%v", stepRows, err)
 	}
 }
@@ -777,15 +783,15 @@ func TestDeletionReplayPreflightsWholeBatchBeforeOwnerSideEffects(t *testing.T) 
 	store := lifecyclestore.NewLifecycleStore(host, host.definitions)
 	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
 	for _, request := range []internalmodel.SubjectRequest{
-		{ID: "request-a", WorkspaceID: "workspace-a", Kind: internalmodel.SubjectRequestErase, Status: internalmodel.SubjectRequestSucceeded, SubjectID: "subject-a", ResolvedIdentity: "identity-a", RequestedBy: "requester", BackupPending: true, ResultReference: "erase-evidence:request-a", CreatedAt: now, UpdatedAt: now},
-		{ID: "request-b", WorkspaceID: "workspace-a", Kind: internalmodel.SubjectRequestErase, Status: internalmodel.SubjectRequestSucceeded, SubjectID: "subject-b", ResolvedIdentity: "identity-b", RequestedBy: "requester", BackupPending: true, ResultReference: "erase-evidence:request-b", CreatedAt: now, UpdatedAt: now},
+		{RequestID: "request-a", WorkspaceID: "workspace-a", Kind: internalmodel.SubjectRequestErase, Status: internalmodel.SubjectRequestSucceeded, SubjectID: "subject-a", ResolvedIdentity: "identity-a", RequestedBy: "requester", BackupPending: true, ResultReference: "erase-evidence:request-a", CreatedAt: now, UpdatedAt: now},
+		{RequestID: "request-b", WorkspaceID: "workspace-a", Kind: internalmodel.SubjectRequestErase, Status: internalmodel.SubjectRequestSucceeded, SubjectID: "subject-b", ResolvedIdentity: "identity-b", RequestedBy: "requester", BackupPending: true, ResultReference: "erase-evidence:request-b", CreatedAt: now, UpdatedAt: now},
 	} {
 		if err := store.SaveSubjectRequest(t.Context(), request); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if err := store.SaveLegalHold(t.Context(), internalmodel.LegalHold{
-		ID: "hold-b", WorkspaceID: "workspace-a", ResourceType: "data_subject", ResourceID: "identity-b",
+		HoldID: "hold-b", WorkspaceID: "workspace-a", ResourceType: "data_subject", ResourceID: "identity-b",
 		CreatedBy: "legal", StartsAt: now.Add(-time.Hour), ReviewAt: now.Add(time.Hour),
 	}); err != nil {
 		t.Fatal(err)

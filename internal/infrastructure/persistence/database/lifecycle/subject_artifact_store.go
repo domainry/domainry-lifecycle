@@ -12,6 +12,7 @@ import (
 	"time"
 
 	sharedartifact "github.com/domainry/domainry-foundation/artifact"
+	"github.com/domainry/domainry-foundation/entityid"
 	lifecyclecontract "github.com/domainry/domainry-lifecycle-sdk/contract"
 	"github.com/domainry/domainry-lifecycle-sdk/modulehost"
 	filesystem "github.com/domainry/domainry-lifecycle/internal/infrastructure/artifact/filesystem"
@@ -71,8 +72,17 @@ func (s *SubjectArtifactStore) PutSubjectExport(ctx context.Context, input lifec
 	if s.host == nil || s.host.Transactions() == nil || s.artifacts == nil || s.content == nil || s.writer == nil {
 		return result, fmt.Errorf("lifecycle shared subject export Artifact persistence is unavailable")
 	}
-	artifactID := subjectExportArtifactID(input.WorkspaceID, input.RequestID)
-	info, err := s.writer.PutImmutable(ctx, input.WorkspaceID, artifactID, input.Payload)
+	idempotencyKey := subjectExportArtifactID(input.WorkspaceID, input.RequestID)
+	if existing, found, lookupErr := s.artifacts.ByIdempotency(lifecycleArtifactContext(ctx), input.WorkspaceID, sharedartifact.OwnerLifecycle, "subject_export", idempotencyKey); lookupErr != nil {
+		return result, lookupErr
+	} else if found {
+		return lifecyclecontract.SubjectExportReference{ArtifactID: existing.ArtifactID, ExpiresAt: existing.ExpiresAt}, nil
+	}
+	artifactID, err := entityid.New("art")
+	if err != nil {
+		return result, err
+	}
+	info, err := s.writer.PutImmutable(ctx, input.WorkspaceID, idempotencyKey, input.Payload)
 	if err != nil {
 		return result, err
 	}
@@ -80,7 +90,7 @@ func (s *SubjectArtifactStore) PutSubjectExport(ctx context.Context, input lifec
 		if err == nil {
 			return
 		}
-		current, found, readErr := s.artifacts.ByID(context.WithoutCancel(ctx), input.WorkspaceID, artifactID)
+		current, found, readErr := s.artifacts.ByIdempotency(context.WithoutCancel(ctx), input.WorkspaceID, sharedartifact.OwnerLifecycle, "subject_export", idempotencyKey)
 		if readErr == nil && (!found || current.StorageReference != info.Reference) {
 			_ = s.content.Delete(context.WithoutCancel(ctx), input.WorkspaceID, info.Reference)
 		}
@@ -95,7 +105,7 @@ func (s *SubjectArtifactStore) PutSubjectExport(ctx context.Context, input lifec
 	}
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	value := sharedartifact.Artifact{
-		ID: artifactID, WorkspaceID: input.WorkspaceID, Owner: sharedartifact.OwnerLifecycle, Kind: "subject_export", IdempotencyKey: artifactID,
+		ArtifactID: artifactID, WorkspaceID: input.WorkspaceID, Owner: sharedartifact.OwnerLifecycle, Kind: "subject_export", IdempotencyKey: idempotencyKey,
 		CreatedBy: input.CreatedBy, OwnerOrgID: input.OwnerOrgID, Filename: artifactID + ".json", MediaType: "application/json",
 		ContentSHA256: info.SHA256, SizeBytes: info.Size, StorageReference: info.Reference,
 		Status: sharedartifact.StatusAvailable, ExpiresAt: input.ExpiresAt, ScanStatus: sharedartifact.ScanNotRequired,
@@ -113,8 +123,8 @@ func (s *SubjectArtifactStore) PutSubjectExport(ctx context.Context, input lifec
 			return fmt.Errorf("Lifecycle subject export Artifact identity conflict")
 		}
 		bindings := []sharedartifact.Binding{
-			{ID: subjectExportBindingID(artifactID, "request"), WorkspaceID: input.WorkspaceID, ArtifactID: artifactID, Owner: sharedartifact.OwnerLifecycle, Kind: sharedartifact.BindingJob, ResourceType: "lifecycle.subject_request", ResourceID: input.RequestID, Metadata: json.RawMessage(`{}`), CreatedAt: now},
-			{ID: subjectExportBindingID(artifactID, "subject"), WorkspaceID: input.WorkspaceID, ArtifactID: artifactID, Owner: sharedartifact.OwnerLifecycle, Kind: sharedartifact.BindingSubject, ResourceType: "data_subject", ResourceID: input.ResolvedIdentity, Metadata: json.RawMessage(`{}`), CreatedAt: now},
+			{WorkspaceID: input.WorkspaceID, ArtifactID: artifactID, Owner: sharedartifact.OwnerLifecycle, Kind: sharedartifact.BindingJob, ResourceType: "lifecycle.subject_request", ResourceID: input.RequestID, Metadata: json.RawMessage(`{}`), CreatedAt: now},
+			{WorkspaceID: input.WorkspaceID, ArtifactID: artifactID, Owner: sharedartifact.OwnerLifecycle, Kind: sharedartifact.BindingSubject, ResourceType: "data_subject", ResourceID: input.ResolvedIdentity, Metadata: json.RawMessage(`{}`), CreatedAt: now},
 		}
 		for _, binding := range bindings {
 			if _, _, bindErr := s.artifacts.Bind(artifactCtx, binding); bindErr != nil {
@@ -126,7 +136,7 @@ func (s *SubjectArtifactStore) PutSubjectExport(ctx context.Context, input lifec
 	if err != nil {
 		return result, err
 	}
-	return lifecyclecontract.SubjectExportReference{ArtifactID: stored.ID, ExpiresAt: stored.ExpiresAt}, nil
+	return lifecyclecontract.SubjectExportReference{ArtifactID: stored.ArtifactID, ExpiresAt: stored.ExpiresAt}, nil
 }
 
 func (s *SubjectArtifactStore) ReadSubjectExport(ctx context.Context, workspaceID, artifactID string, now time.Time) (json.RawMessage, error) {
@@ -275,7 +285,7 @@ func (s *SubjectArtifactStore) DeleteSubjectFileVersion(ctx context.Context, ref
 			return err
 		}
 		changed, err := s.artifacts.Update(lifecycleArtifactContext(txctx), sharedartifact.Mutation{
-			WorkspaceID: terminal.WorkspaceID, ID: terminal.ID, Owner: terminal.Owner, Kind: terminal.Kind,
+			WorkspaceID: terminal.WorkspaceID, ArtifactID: terminal.ArtifactID, Owner: terminal.Owner, Kind: terminal.Kind,
 			ExpectedStatus: terminal.Status, ExpectedScanStatus: terminal.ScanStatus,
 			Status: sharedartifact.StatusExpired, ScanStatus: terminal.ScanStatus, ExpiresAt: terminal.ExpiresAt,
 			Metadata: raw, UpdatedAt: time.Now().UTC(),
@@ -298,7 +308,7 @@ func (s *SubjectArtifactStore) DeleteSubjectFileVersion(ctx context.Context, ref
 		return result, err
 	}
 	err = s.host.Transactions().WithinTransaction(ctx, func(txctx context.Context, _ modulehost.DBTX) error {
-		current, found, err := s.artifacts.ByID(lifecycleArtifactContext(txctx), terminal.WorkspaceID, terminal.ID)
+		current, found, err := s.artifacts.ByID(lifecycleArtifactContext(txctx), terminal.WorkspaceID, terminal.ArtifactID)
 		if err != nil {
 			return err
 		}
@@ -324,7 +334,7 @@ func (s *SubjectArtifactStore) DeleteSubjectFileVersion(ctx context.Context, ref
 			return err
 		}
 		changed, err := s.artifacts.Update(lifecycleArtifactContext(txctx), sharedartifact.Mutation{
-			WorkspaceID: current.WorkspaceID, ID: current.ID, Owner: current.Owner, Kind: current.Kind,
+			WorkspaceID: current.WorkspaceID, ArtifactID: current.ArtifactID, Owner: current.Owner, Kind: current.Kind,
 			ExpectedStatus: current.Status, ExpectedScanStatus: current.ScanStatus,
 			Status: sharedartifact.StatusDeleted, ScanStatus: current.ScanStatus, Metadata: raw, UpdatedAt: time.Now().UTC(),
 		})
@@ -332,7 +342,7 @@ func (s *SubjectArtifactStore) DeleteSubjectFileVersion(ctx context.Context, ref
 			return err
 		}
 		if !changed {
-			latest, latestFound, readErr := s.artifacts.ByID(lifecycleArtifactContext(txctx), current.WorkspaceID, current.ID)
+			latest, latestFound, readErr := s.artifacts.ByID(lifecycleArtifactContext(txctx), current.WorkspaceID, current.ArtifactID)
 			if readErr != nil {
 				return readErr
 			}
