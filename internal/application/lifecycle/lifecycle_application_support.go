@@ -108,7 +108,7 @@ func (s *LifecycleApplicationService) audit(ctx context.Context, workspaceID, ev
 		Family: auditcontract.EventFamilyLifecycleCompliance, Event: event, ObjectKey: descriptor.objectKey, RecordID: strings.TrimSpace(resourceID),
 		Actor: auditcontract.Actor{
 			WorkspaceID: strings.TrimSpace(workspaceID), SubjectID: strings.TrimSpace(actor),
-			RequestID: requestcontext.RequestID(ctx), CorrelationID: requestcontext.CorrelationID(ctx),
+			RequestID: requestcontext.RequestID(ctx),
 		},
 		Summary: descriptor.summary, Metadata: metadata, After: lifecycleAuditAfter(payload),
 	})

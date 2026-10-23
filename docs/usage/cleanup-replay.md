@@ -32,7 +32,7 @@ Preview one exact policy first, review its owner-produced impact, and create a c
 
 ## Example
 
-An operator first previews policy `expired_subject_exports`, receives twelve eligible artifacts, and creates one cleanup job with the required approval reason. The worker durably claims and processes that job. Months later a database restore exposes two registered deletion obligations; replay handles only those registrations, refuses work covered by an active legal hold, and keeps the original request and audit correlation.
+An operator first previews policy `expired_subject_exports`, receives twelve eligible artifacts, and creates one cleanup job with the required approval reason. The worker durably claims and processes that job. Months later a database restore exposes two registered deletion obligations; replay handles only those registrations, refuses work covered by an active legal hold, and keeps the original operation, request, and audit event identities.
 
 ## Permissions and scope
 
