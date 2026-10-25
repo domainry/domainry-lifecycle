@@ -3,11 +3,11 @@ module github.com/domainry/domainry-lifecycle
 go 1.26.0
 
 require (
-	github.com/domainry/domainry-audit-sdk v0.1.20
-	github.com/domainry/domainry-foundation v0.2.17
-	github.com/domainry/domainry-identity-sdk v0.1.37
-	github.com/domainry/domainry-lifecycle-sdk v0.1.31
-	github.com/domainry/domainry-metadata-sdk v0.1.18
+	github.com/domainry/domainry-audit-sdk v0.1.21
+	github.com/domainry/domainry-foundation v0.2.18
+	github.com/domainry/domainry-identity-sdk v0.1.38
+	github.com/domainry/domainry-lifecycle-sdk v0.1.32
+	github.com/domainry/domainry-metadata-sdk v0.1.19
 	github.com/domainry/domainry-orm v0.1.34
 	modernc.org/sqlite v1.57.0
 )
