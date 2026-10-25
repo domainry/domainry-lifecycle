@@ -34,7 +34,7 @@ func TestAccountErasureQueueCommitsWithActionAndExecutesAfterCommit(t *testing.T
 	}
 	scope := access.NewSystemScope(access.SystemScopeGlobal, "project action account erasure")
 	ctx := requestcontext.WithWorkspaceID(t.Context(), "workspace-a")
-	approval := contract.AccountErasureApproval{WorkspaceID: "workspace-a", RequestID: "action-erasure-1", SubjectID: "subject-1", RequestedBy: "subject-1", ApprovedBy: "operator",
+	approval := contract.AccountErasureApproval{WorkspaceID: "workspace-a", RequestID: "subreq_00000000000000000000000000000001", SubjectID: "subject-1", RequestedBy: "subject-1", ApprovedBy: "operator",
 		OwnerOrgID: "org-a", ActionKey: "member.process_deletion", ApprovalID: "governance-request-1", BindingKey: "member", ObjectKey: "member", ProfileID: "member-1"}
 	reference := contract.AccountErasureReference{WorkspaceID: approval.WorkspaceID, RequestID: approval.RequestID, OwnerOrgID: approval.OwnerOrgID, BindingKey: approval.BindingKey, ObjectKey: approval.ObjectKey, ProfileID: approval.ProfileID}
 	if _, err = queue.StageApprovedAccountErasure(ctx, approval, scope); err == nil {
@@ -46,7 +46,7 @@ func TestAccountErasureQueueCommitsWithActionAndExecutesAfterCommit(t *testing.T
 		if err != nil {
 			return err
 		}
-		if queued.Status != model.SubjectRequestApproved || owner.calls != 0 {
+		if queued.RequestID != approval.RequestID || queued.Status != model.SubjectRequestApproved || owner.calls != 0 {
 			t.Fatalf("staging ran erasure: status=%s calls=%d", queued.Status, owner.calls)
 		}
 		if _, err = queue.ProcessApprovedAccountErasures(txctx, "worker", 10, time.Now().UTC(), scope); err == nil {
@@ -146,7 +146,7 @@ func TestAccountErasureQueueRetriesFailedCleanupWithDurablePlan(t *testing.T) {
 	queue := binding.(sdk.AccountErasureBinding).AccountErasures()
 	scope := access.NewSystemScope(access.SystemScopeGlobal, "project action account erasure")
 	ctx := requestcontext.WithWorkspaceID(t.Context(), "workspace-a")
-	approval := contract.AccountErasureApproval{WorkspaceID: "workspace-a", RequestID: "action-erasure-retry", SubjectID: "subject-1", RequestedBy: "subject-1", ApprovedBy: "operator",
+	approval := contract.AccountErasureApproval{WorkspaceID: "workspace-a", RequestID: "subreq_00000000000000000000000000000002", SubjectID: "subject-1", RequestedBy: "subject-1", ApprovedBy: "operator",
 		OwnerOrgID: "org-a", ActionKey: "member.process_deletion", ApprovalID: "governance-request-2", BindingKey: "member", ObjectKey: "member", ProfileID: "member-1"}
 	reference := contract.AccountErasureReference{WorkspaceID: approval.WorkspaceID, RequestID: approval.RequestID, OwnerOrgID: approval.OwnerOrgID, BindingKey: approval.BindingKey, ObjectKey: approval.ObjectKey, ProfileID: approval.ProfileID}
 	if err = host.Transactions().WithinTransaction(ctx, func(txctx context.Context, _ modulehost.DBTX) error {

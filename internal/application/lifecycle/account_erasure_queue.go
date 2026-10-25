@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/domainry/domainry-foundation/entityid"
 	"github.com/domainry/domainry-foundation/requestcontext"
 	sdk "github.com/domainry/domainry-lifecycle-sdk"
 	"github.com/domainry/domainry-lifecycle-sdk/access"
@@ -73,10 +72,7 @@ func (s *LifecycleApplicationService) StageApprovedAccountErasure(ctx context.Co
 		return model.SubjectRequest{}, lifecycleLegalHoldActive(fmt.Errorf("account erasure blocked by legal hold"))
 	}
 	now := time.Now().UTC()
-	requestID, err := entityid.New("subreq")
-	if err != nil {
-		return model.SubjectRequest{}, err
-	}
+	requestID := approval.RequestID
 	request := model.SubjectRequest{RequestID: requestID, IdempotencyKey: approval.RequestID, WorkspaceID: approval.WorkspaceID, RequestType: model.SubjectRequestTypeAccountErasure, Kind: model.SubjectRequestErase, Status: model.SubjectRequestApproved,
 		SubjectType: "user", SubjectID: approval.SubjectID, ResolvedIdentity: approval.SubjectID, RequestedBy: approval.RequestedBy, ApprovedBy: approval.ApprovedBy,
 		OwnerOrgID: approval.OwnerOrgID, Reason: "approved project Action account erasure", CreatedAt: now, UpdatedAt: now}
